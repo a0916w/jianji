@@ -297,6 +297,9 @@ async function addFiles(files) {
     setStatus(`正在解析 ${file.name} …`);
     try {
       const clip = isImageFile(file) ? await loadImage(file) : await loadClip(file);
+      // mediaIndex：默认等于其在 clips 数组中的落位（非 job 模式下即原始媒体顺序）；
+      // job 模式下 initFromJob 会在 addFiles 结束后按 data.media 覆盖为真正的原始索引。
+      if (clip.mediaIndex === undefined) clip.mediaIndex = clips.length;
       clips.push(clip);
       added++;
       renderClips();
@@ -826,7 +829,21 @@ refreshButtons();
       const name = m.url.split("/").pop();
       files.push(new File([b], name, { type: b.type || (m.type === "image" ? "image/jpeg" : "video/mp4") }));
     }
+    const startLen = clips.length;
     await addFiles(files);
+    // C1 修复：render.js 按 job.media[c.index]（原始 ingest 顺序）取媒体文件，
+    // 而不是按时间轴当前顺序。addFiles 是顺序 await 且不重排，新增的 clips 与
+    // data.media 一一对应；万一有素材解析失败导致数量不一致，退化为按文件名匹配。
+    const newClips = clips.slice(startLen);
+    if (newClips.length === data.media.length) {
+      newClips.forEach((c, k) => { c.mediaIndex = k; });
+    } else {
+      const nameToIndex = new Map();
+      data.media.forEach((m, k) => { nameToIndex.set(m.url.split("/").pop(), k); });
+      newClips.forEach((c) => {
+        if (nameToIndex.has(c.name)) c.mediaIndex = nameToIndex.get(c.name);
+      });
+    }
     // 「导出合成视频」改成提交：克隆节点摘除原有的本地 MediaRecorder 导出监听，
     // 避免点击时旧的 addEventListener 处理器与新的提交逻辑同时触发。
     const oldBtn = $("exportBtn");
@@ -841,7 +858,9 @@ refreshButtons();
           aspect: $("aspectSel").value,
           segLen: parseFloat($("segLenSel").value),
           fade: parseFloat($("fadeSel").value),
-          clips: clips.map((c, i) => ({ index: i, start: c.start, end: c.end, order: i, type: c.type })),
+          // index 必须是原始媒体数组下标（C1），order 才是当前时间轴位置；
+          // mediaIndex 缺失时(非 job 模式的直接拖拽)回退为 i。
+          clips: clips.map((c, i) => ({ index: c.mediaIndex !== undefined ? c.mediaIndex : i, start: c.start, end: c.end, order: i, type: c.type })),
         };
         const sub = await fetch("/api/submit", {
           method: "POST", headers: { "Content-Type": "application/json" },

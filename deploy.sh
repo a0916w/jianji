@@ -11,11 +11,14 @@ if [ -d "$APP_DIR/.git" ]; then git -C "$APP_DIR" pull --ff-only; else git clone
 install -d -o "$SVC_USER" -g "$SVC_USER" "$APP_DIR/work"
 chown -R "$SVC_USER":"$SVC_USER" "$APP_DIR"
 if [ ! -f "$ENV_FILE" ]; then
-  cat > "$ENV_FILE" <<'EOF'
+  # 安全修复：不能用可猜测的占位符当 SIGN_SECRET（用户可能懒得改，直接破坏链接签名防护）。
+  # 首次生成时自动出一段强随机密钥；openssl 不存在时退化用 /dev/urandom。
+  GEN_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  cat > "$ENV_FILE" <<EOF
 EDIT_MODE=manual
 PORT=3001
 EDIT_URL=http://18.163.100.253:3001
-SIGN_SECRET=改成一段随机字符串
+SIGN_SECRET=$GEN_SECRET
 TELEGRAM_BOT_TOKEN=BotFather给的token
 TG_RESULT_CHAT=
 WORK_DIR=/opt/jianji/work
@@ -25,7 +28,7 @@ DEFAULT_SEG_LEN=5
 DEFAULT_FADE=0.35
 DEFAULT_ASPECT=auto
 EOF
-  chmod 600 "$ENV_FILE"; echo ">>> 生成 $ENV_FILE，填好 SIGN_SECRET/TELEGRAM_BOT_TOKEN 后重跑"; exit 0
+  chmod 600 "$ENV_FILE"; echo ">>> 生成 $ENV_FILE（SIGN_SECRET 已自动生成随机值），填好 TELEGRAM_BOT_TOKEN 后重跑"; exit 0
 fi
 chmod 600 "$ENV_FILE"
 cat > /etc/systemd/system/jianji.service <<EOF

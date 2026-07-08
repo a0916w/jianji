@@ -44,7 +44,8 @@ const app = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && (p === '/edit' || p === '/' )) {
       const html = await fs.promises.readFile(path.join(__dirname, 'index.html'));
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      // no-referrer：页面地址可能带 ?sign=/?token=，避免点击链接或加载资源时经 Referer 泄漏。
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
       return res.end(html);
     }
 
@@ -70,7 +71,8 @@ const app = http.createServer(async (req, res) => {
 td,th{border:1px solid #ccc;padding:4px 8px;font-size:14px;text-align:left}</style></head>
 <body><h1>任务列表</h1><table><thead><tr><th>编号</th><th>状态</th><th>模式</th><th>来源</th><th>标题</th><th>创建</th><th>操作</th></tr></thead>
 <tbody>${rows}</tbody></table></body></html>`;
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      // no-referrer：页面地址可能带 ?sign=/?token=，避免点击链接或加载资源时经 Referer 泄漏。
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
       return res.end(html);
     }
 
@@ -159,6 +161,7 @@ td,th{border:1px solid #ccc;padding:4px 8px;font-size:14px;text-align:left}</sty
           'X-Content-Type-Options': 'nosniff',
           'Content-Disposition': 'inline; filename="' + require('path').basename(fp) + '"',
           'Content-Security-Policy': "default-src 'none'; sandbox",
+          'Referrer-Policy': 'no-referrer', // 防带 ?sign= 的媒体地址经 Referer 泄漏
         });
         return res.end(buf);
       }

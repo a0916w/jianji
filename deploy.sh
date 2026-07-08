@@ -14,11 +14,14 @@ if [ ! -f "$ENV_FILE" ]; then
   # 安全修复：不能用可猜测的占位符当 SIGN_SECRET（用户可能懒得改，直接破坏链接签名防护）。
   # 首次生成时自动出一段强随机密钥；openssl 不存在时退化用 /dev/urandom。
   GEN_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  # /jobs 管理列表用 ADMIN_TOKEN 保护，同样自动生成随机值，别留给用户默认放行。
+  GEN_ADMIN=$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
   cat > "$ENV_FILE" <<EOF
 EDIT_MODE=manual
 PORT=3001
 EDIT_URL=http://18.163.100.253:3001
 SIGN_SECRET=$GEN_SECRET
+ADMIN_TOKEN=$GEN_ADMIN
 TELEGRAM_BOT_TOKEN=BotFather给的token
 TG_RESULT_CHAT=
 WORK_DIR=/opt/jianji/work
@@ -28,7 +31,7 @@ DEFAULT_SEG_LEN=5
 DEFAULT_FADE=0.35
 DEFAULT_ASPECT=auto
 EOF
-  chmod 600 "$ENV_FILE"; echo ">>> 生成 $ENV_FILE（SIGN_SECRET 已自动生成随机值），填好 TELEGRAM_BOT_TOKEN 后重跑"; exit 0
+  chmod 600 "$ENV_FILE"; echo ">>> 生成 $ENV_FILE（SIGN_SECRET / ADMIN_TOKEN 已自动生成随机值），填好 TELEGRAM_BOT_TOKEN 后重跑"; exit 0
 fi
 chmod 600 "$ENV_FILE"
 cat > /etc/systemd/system/jianji.service <<EOF

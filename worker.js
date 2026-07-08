@@ -71,6 +71,9 @@ function startWorker({ db, workDir }) {
 
 // 成品发回 Telegram：MUST-FIX #2 — /media URL 必须带签名，否则 server 会 403。
 async function deliverResult(job, outPath) {
+  // 网页来源的任务没有 Telegram 会话可回传（tg_chat_id 也不存在）——成品留在磁盘/DB，
+  // 由用户从 /jobs 管理列表的「下载」链接取，调用方（tick）无论如何都会把状态标 done。
+  if (job.source === 'web' || !job.tg_chat_id) return;
   if (!botRef) return; // 未注入 bot（如单测直接调 render）时跳过回传
   const cap = [job.title, job.description, (job.tags || []).map((t) => '#' + t).join(' ')].filter(Boolean).join('\n');
   const url = `${botRef.publicBase}/media/${job.id}/out.mp4?sign=${sign(job.id)}`;

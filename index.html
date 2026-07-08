@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>快速智能剪辑</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #181c23;
+    --panel-2: #1f2530;
+    --border: #2a3140;
+    --text: #e8ecf3;
+    --text-dim: #8b94a7;
+    --accent: #4f7cff;
+    --accent-2: #7c5cff;
+    --green: #2ecc8f;
+    --red: #ff5c6c;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    min-height: 100vh;
+    padding: 24px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px; margin-bottom: 20px;
+  }
+  h1 { font-size: 22px; font-weight: 700; letter-spacing: .5px; }
+  h1 span {
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .settings { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .settings label { font-size: 13px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+  select {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px; font-size: 13px; outline: none; cursor: pointer;
+  }
+
+  /* 上传区 */
+  #dropzone {
+    border: 2px dashed var(--border); border-radius: var(--radius);
+    padding: 34px 20px; text-align: center; cursor: pointer;
+    transition: border-color .2s, background .2s; margin-bottom: 20px;
+    background: var(--panel);
+  }
+  #dropzone.dragover { border-color: var(--accent); background: #1a2233; }
+  #dropzone .big { font-size: 16px; margin-bottom: 6px; }
+  #dropzone .small { font-size: 13px; color: var(--text-dim); }
+
+  /* 片段列表 */
+  #clips {
+    display: flex; gap: 14px; overflow-x: auto; padding: 6px 2px 14px;
+    min-height: 40px;
+  }
+  .clip-card {
+    flex: 0 0 240px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 10px; cursor: grab; position: relative;
+    transition: transform .15s, border-color .15s;
+  }
+  .clip-card.dragging { opacity: .4; }
+  .clip-card:hover { border-color: #3a4560; }
+  .clip-card .order {
+    position: absolute; top: -8px; left: -8px; width: 24px; height: 24px;
+    background: var(--accent); border-radius: 50%; font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; z-index: 2;
+  }
+  .clip-card .del {
+    position: absolute; top: 6px; right: 6px; width: 22px; height: 22px;
+    background: rgba(0,0,0,.55); border: none; color: #fff; border-radius: 6px;
+    cursor: pointer; font-size: 12px; z-index: 2; line-height: 1;
+  }
+  .clip-card .del:hover { background: var(--red); }
+  .filmstrip {
+    display: flex; gap: 2px; border-radius: 8px; overflow: hidden;
+    height: 62px; background: #000; margin-bottom: 8px;
+  }
+  .filmstrip img { flex: 1; object-fit: cover; min-width: 0; height: 100%; }
+  .clip-name {
+    font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin-bottom: 6px;
+  }
+  .clip-meta { font-size: 11px; color: var(--text-dim); margin-bottom: 8px; }
+  .clip-meta .picked { color: var(--green); }
+  .trim-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
+  .trim-row input[type=range] { flex: 1; accent-color: var(--accent); height: 4px; }
+
+  /* 操作按钮 */
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0 22px; }
+  button.btn {
+    border: none; border-radius: 10px; padding: 10px 18px; font-size: 14px;
+    font-weight: 600; cursor: pointer; color: #fff; transition: filter .15s, opacity .15s;
+  }
+  button.btn:hover { filter: brightness(1.15); }
+  button.btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-smart { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+  .btn-plain { background: var(--panel-2); border: 1px solid var(--border) !important; }
+  .btn-export { background: var(--green); color: #04140d; }
+  #status { font-size: 13px; color: var(--text-dim); align-self: center; }
+
+  /* 预览区 */
+  .preview-panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px; margin-bottom: 20px;
+  }
+  .canvas-box { display: flex; justify-content: center; background: #000; border-radius: 8px; overflow: hidden; }
+  #canvas { max-width: 100%; max-height: 520px; display: block; }
+  .player-bar { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  .player-bar .time { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; min-width: 96px; }
+  #seekbar {
+    flex: 1; height: 18px; display: flex; align-items: center;
+    cursor: pointer; touch-action: none;
+  }
+  #seektrack {
+    flex: 1; height: 6px; background: var(--panel-2); border-radius: 3px;
+    position: relative;
+  }
+  #seekfill {
+    height: 100%; width: 0; border-radius: 3px; position: relative;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  }
+  #seekfill::after {
+    content: ""; position: absolute; right: -7px; top: 50%;
+    width: 14px; height: 14px; border-radius: 50%; background: #fff;
+    transform: translateY(-50%); box-shadow: 0 0 6px rgba(0,0,0,.5);
+  }
+  #playBtn {
+    width: 42px; height: 42px; border-radius: 50%; border: none; cursor: pointer;
+    background: var(--accent); color: #fff; font-size: 16px;
+  }
+
+  #exportInfo { margin-top: 10px; font-size: 13px; color: var(--text-dim); }
+  #exportInfo a { color: var(--green); font-weight: 600; }
+  .hidden { display: none !important; }
+  .empty-tip { color: var(--text-dim); font-size: 13px; padding: 8px 2px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>⚡ <span>快速智能剪辑</span></h1>
+    <div class="settings">
+      <label>画幅
+        <select id="aspectSel">
+          <option value="auto" selected>自动（跟随视频）</option>
+          <option value="1280x720">横屏 16:9</option>
+          <option value="720x1280">竖屏 9:16</option>
+          <option value="720x720">方形 1:1</option>
+        </select>
+      </label>
+      <label>每段智能选取
+        <select id="segLenSel">
+          <option value="3">3 秒</option>
+          <option value="5" selected>5 秒</option>
+          <option value="8">8 秒</option>
+          <option value="12">12 秒</option>
+        </select>
+      </label>
+      <label>转场
+        <select id="fadeSel">
+          <option value="0.35" selected>淡入淡出</option>
+          <option value="0">无（硬切）</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <div id="dropzone">
+    <div class="big">📥 拖拽多个短视频 / 图片到这里，或点击选择文件</div>
+    <div class="small">添加后自动按顺序拼接成一条成片，直接播放或导出即可；横屏 / 竖屏均支持，图片可设置显示时长</div>
+    <input type="file" id="fileInput" accept="video/*,image/*" multiple hidden>
+  </div>
+
+  <div id="clips"></div>
+  <div class="empty-tip" id="emptyTip">尚未添加视频片段。添加后每个片段会自动抽帧生成缩略图，可拖拽卡片调整顺序。</div>
+
+  <div class="actions">
+    <button class="btn btn-smart" id="smartBtn" disabled>✨ 智能选段（可选：自动挑精彩部分）</button>
+    <button class="btn btn-plain" id="resetBtn" disabled>↺ 重置为完整拼接</button>
+    <button class="btn btn-export" id="exportBtn" disabled>⬇ 导出合成视频</button>
+    <span id="status"></span>
+  </div>
+
+  <div class="preview-panel">
+    <div class="canvas-box"><canvas id="canvas" width="1280" height="720"></canvas></div>
+    <div class="player-bar">
+      <button id="playBtn" disabled>▶</button>
+      <div id="seekbar"><div id="seektrack"><div id="seekfill"></div></div></div>
+      <div class="time" id="timeLabel">00:00 / 00:00</div>
+    </div>
+    <div id="exportInfo" class="hidden"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+/* ---------------- 状态 ---------------- */
+let clips = [];          // {id, file, url, name, duration, video, thumbs[], start, end, smart}
+let nextId = 1;
+let exporting = false;
+let audioCtx = null, masterGain = null, streamDest = null;
+
+const $ = id => document.getElementById(id);
+const canvas = $("canvas"), cx = canvas.getContext("2d");
+const statusEl = $("status");
+
+function setStatus(t) { statusEl.textContent = t; }
+function fmt(s) {
+  s = Math.max(0, s);
+  const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+  return String(m).padStart(2, "0") + ":" + String(sec).padStart(2, "0");
+}
+
+/* ---------------- 时间轴（自动拼接） ---------------- */
+let entries = [];        // {clip, dur, offset}
+let totalDur = 0;
+let curIdx = 0;          // 当前所在片段
+let curGlobal = 0;       // 当前全局时间（秒）
+let isPlaying = false;
+let rafId = null;
+let onTimelineDone = null;   // 播放到末尾的回调（导出用）
+
+function rebuild() {
+  let acc = 0;
+  entries = clips.map(c => {
+    const e = { clip: c, dur: c.end - c.start, offset: acc };
+    acc += e.dur;
+    return e;
+  });
+  totalDur = acc;
+  curGlobal = Math.min(curGlobal, totalDur);
+}
+
+function locate(t) {
+  t = Math.max(0, Math.min(t, totalDur - 0.01));
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (t < e.offset + e.dur) return { i, local: t - e.offset };
+  }
+  const last = entries.length - 1;
+  return { i: last, local: Math.max(0, entries[last].dur - 0.01) };
+}
+
+function updateProgress(t) {
+  curGlobal = t;
+  $("seekfill").style.width = totalDur ? (t / totalDur * 100) + "%" : "0";
+  $("timeLabel").textContent = fmt(t) + " / " + fmt(totalDur);
+}
+
+function refreshButtons() {
+  const has = clips.length > 0;
+  $("smartBtn").disabled = !has || exporting;
+  $("resetBtn").disabled = !has || exporting;
+  $("exportBtn").disabled = !has || exporting;
+  $("playBtn").disabled = !has || exporting;
+  $("emptyTip").classList.toggle("hidden", has);
+  updateProgress(curGlobal);
+}
+
+/* 片段/顺序/裁剪发生变化后调用：停止播放、重建时间轴、回到开头并显示首帧 */
+function timelineChanged() {
+  hardStop();
+  rebuild();
+  curGlobal = 0;
+  applyAspect();
+  refreshButtons();
+  showFrameAt(0);
+}
+
+/* ---------------- 文件导入（自动拼接） ---------------- */
+const dz = $("dropzone"), fi = $("fileInput");
+dz.addEventListener("click", () => fi.click());
+fi.addEventListener("change", () => { addFiles(fi.files); fi.value = ""; });
+dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("dragover"); });
+dz.addEventListener("dragleave", () => dz.classList.remove("dragover"));
+dz.addEventListener("drop", e => {
+  e.preventDefault(); dz.classList.remove("dragover");
+  addFiles(e.dataTransfer.files);
+});
+
+function isVideoFile(f) { return f.type.startsWith("video/") || /\.(mp4|webm|mov|m4v)$/i.test(f.name); }
+function isImageFile(f) { return f.type.startsWith("image/") || /\.(jpe?g|png|gif|webp|bmp|avif)$/i.test(f.name); }
+
+async function addFiles(files) {
+  const list = [...files].filter(f => isVideoFile(f) || isImageFile(f));
+  let added = 0;
+  for (const file of list) {
+    setStatus(`正在解析 ${file.name} …`);
+    try {
+      const clip = isImageFile(file) ? await loadImage(file) : await loadClip(file);
+      clips.push(clip);
+      added++;
+      renderClips();
+    } catch (err) {
+      console.error(err);
+      setStatus(`⚠ 无法解析 ${file.name}（格式可能不受浏览器支持）`);
+    }
+  }
+  if (added) {
+    timelineChanged();
+    setStatus(`✅ 已自动拼接 ${clips.length} 个片段，成片 ${totalDur.toFixed(1)} 秒，可直接播放或导出`);
+  }
+}
+
+function loadClip(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.preload = "auto";
+    video.playsInline = true;
+    video.src = url;
+    video.addEventListener("error", () => reject(new Error("decode error")), { once: true });
+    video.addEventListener("loadedmetadata", async () => {
+      const clip = {
+        id: nextId++, type: "video", file, url, video, el: video,
+        name: file.name,
+        duration: video.duration,
+        start: 0, end: video.duration,
+        thumbs: [], smart: false,
+      };
+      try { clip.thumbs = await extractThumbs(video, 4); } catch (e) { /* 缩略图失败不阻塞 */ }
+      resolve(clip);
+    }, { once: true });
+  });
+}
+
+/* 图片作为片段：默认显示 3 秒，可在卡片上调节 */
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onerror = () => reject(new Error("image decode error"));
+    img.onload = () => {
+      const DUR = 3;
+      resolve({
+        id: nextId++, type: "image", file, url, el: img,
+        name: file.name,
+        duration: DUR,
+        start: 0, end: DUR,
+        thumbs: [url], smart: false,
+      });
+    };
+    img.src = url;
+  });
+}
+
+/* 取片段画面尺寸（视频/图片通用） */
+function mediaSize(el) {
+  return { w: el.videoWidth || el.naturalWidth || 0, h: el.videoHeight || el.naturalHeight || 0 };
+}
+
+/* 抽帧生成缩略图 */
+function seekTo(video, t) {
+  return new Promise(res => {
+    const target = Math.min(Math.max(0, t), Math.max(0, video.duration - 0.05));
+    if (Math.abs(video.currentTime - target) < 0.02 && video.readyState >= 2) return res();
+    const onSeek = () => { video.removeEventListener("seeked", onSeek); res(); };
+    video.addEventListener("seeked", onSeek);
+    video.currentTime = target;
+  });
+}
+async function extractThumbs(video, n) {
+  const c = document.createElement("canvas");
+  const ratio = video.videoWidth / video.videoHeight || 16 / 9;
+  c.height = 90; c.width = Math.round(90 * ratio);
+  const g = c.getContext("2d");
+  const thumbs = [];
+  for (let i = 0; i < n; i++) {
+    const t = video.duration * (i + 0.5) / n;
+    await seekTo(video, t);
+    g.drawImage(video, 0, 0, c.width, c.height);
+    thumbs.push(c.toDataURL("image/jpeg", 0.72));
+  }
+  video.currentTime = 0;
+  return thumbs;
+}
+
+/* ---------------- 片段卡片渲染 + 拖拽排序 ---------------- */
+function renderClips() {
+  const box = $("clips");
+  box.innerHTML = "";
+  clips.forEach((clip, i) => {
+    const card = document.createElement("div");
+    card.className = "clip-card";
+    card.draggable = true;
+    card.dataset.id = clip.id;
+
+    const picked = (clip.end - clip.start).toFixed(1);
+    const isImg = clip.type === "image";
+    const metaLine = isImg
+      ? `🖼 图片 · <span class="picked">显示 ${picked}s</span>`
+      : `总长 ${clip.duration.toFixed(1)}s · <span class="picked">已选 ${picked}s${clip.smart ? " ✨" : ""}</span>`;
+    const controls = isImg
+      ? `<div class="trim-row">时长 <input type="range" class="imgDur" min="0.5" max="10" step="0.5" value="${clip.end - clip.start}"> ${picked}s</div>`
+      : `<div class="trim-row">起 <input type="range" class="trimStart" min="0" max="${clip.duration}" step="0.1" value="${clip.start}"> ${clip.start.toFixed(1)}s</div>
+         <div class="trim-row">止 <input type="range" class="trimEnd" min="0" max="${clip.duration}" step="0.1" value="${clip.end}"> ${clip.end.toFixed(1)}s</div>`;
+    card.innerHTML = `
+      <div class="order">${i + 1}</div>
+      <button class="del" title="删除">✕</button>
+      <div class="filmstrip">${clip.thumbs.map(t => `<img src="${t}">`).join("") || ""}</div>
+      <div class="clip-name" title="${clip.name}">${clip.name}</div>
+      <div class="clip-meta">${metaLine}</div>
+      ${controls}
+    `;
+
+    card.querySelector(".del").addEventListener("click", () => {
+      URL.revokeObjectURL(clip.url);
+      clips = clips.filter(c => c.id !== clip.id);
+      renderClips(); timelineChanged();
+    });
+    if (isImg) {
+      card.querySelector(".imgDur").addEventListener("input", e => {
+        const d = parseFloat(e.target.value);
+        clip.start = 0; clip.end = d; clip.duration = d;
+        renderClips(); timelineChanged();
+      });
+    } else {
+      card.querySelector(".trimStart").addEventListener("input", e => {
+        clip.start = Math.min(parseFloat(e.target.value), clip.end - 0.2);
+        clip.smart = false; renderClips(); timelineChanged();
+      });
+      card.querySelector(".trimEnd").addEventListener("input", e => {
+        clip.end = Math.max(parseFloat(e.target.value), clip.start + 0.2);
+        clip.smart = false; renderClips(); timelineChanged();
+      });
+    }
+
+    card.addEventListener("dragstart", e => {
+      card.classList.add("dragging");
+      e.dataTransfer.setData("text/plain", clip.id);
+    });
+    card.addEventListener("dragend", () => card.classList.remove("dragging"));
+    card.addEventListener("dragover", e => e.preventDefault());
+    card.addEventListener("drop", e => {
+      e.preventDefault();
+      const fromId = parseInt(e.dataTransfer.getData("text/plain"));
+      if (!fromId || fromId === clip.id) return;
+      const fromIdx = clips.findIndex(c => c.id === fromId);
+      const toIdx = clips.findIndex(c => c.id === clip.id);
+      const [moved] = clips.splice(fromIdx, 1);
+      clips.splice(toIdx, 0, moved);
+      renderClips(); timelineChanged();
+    });
+
+    box.appendChild(card);
+  });
+}
+
+/* ---------------- 智能选段：运动量分析（可选） ---------------- */
+async function smartEdit() {
+  hardStop();
+  const segLen = parseFloat($("segLenSel").value);
+  const w = 48, h = 27;
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const g = c.getContext("2d", { willReadFrequently: true });
+
+  for (let ci = 0; ci < clips.length; ci++) {
+    const clip = clips[ci];
+    if (clip.type === "image") continue;   // 图片不参与选段
+    setStatus(`✨ 智能分析中 ${ci + 1}/${clips.length}：${clip.name}`);
+    if (clip.duration <= segLen + 0.3) {
+      clip.start = 0; clip.end = clip.duration; clip.smart = true;
+      continue;
+    }
+    // 均匀采样帧，计算相邻帧像素差作为“运动量”
+    const n = Math.min(30, Math.max(10, Math.floor(clip.duration * 2)));
+    const times = [], scores = [];
+    let prev = null;
+    for (let i = 0; i < n; i++) {
+      const t = clip.duration * i / (n - 1);
+      await seekTo(clip.video, t);
+      g.drawImage(clip.video, 0, 0, w, h);
+      const data = g.getImageData(0, 0, w, h).data;
+      if (prev) {
+        let diff = 0;
+        for (let p = 0; p < data.length; p += 8) diff += Math.abs(data[p] - prev[p]);
+        scores.push(diff);
+        times.push(t);
+      }
+      prev = data.slice();
+    }
+    // 滑动窗口找运动量总和最大的 segLen 区间
+    let bestStart = 0, bestScore = -1;
+    for (let i = 0; i < times.length; i++) {
+      const winStart = times[i];
+      if (winStart + segLen > clip.duration) break;
+      let sum = 0;
+      for (let j = i; j < times.length && times[j] <= winStart + segLen; j++) sum += scores[j];
+      if (sum > bestScore) { bestScore = sum; bestStart = winStart; }
+    }
+    clip.start = bestStart;
+    clip.end = Math.min(clip.duration, bestStart + segLen);
+    clip.smart = true;
+  }
+  renderClips();
+  timelineChanged();
+  setStatus(`✨ 智能选段完成，成片约 ${totalDur.toFixed(1)} 秒`);
+}
+$("smartBtn").addEventListener("click", smartEdit);
+$("resetBtn").addEventListener("click", () => {
+  clips.forEach(c => { if (c.type === "image") return; c.start = 0; c.end = c.duration; c.smart = false; });
+  renderClips(); timelineChanged(); setStatus("已重置为完整拼接");
+});
+
+/* ---------------- 画幅（自动跟随首个视频的横/竖屏） ---------------- */
+function applyAspect() {
+  let val = $("aspectSel").value;
+  if (val === "auto") {
+    const c0 = clips[0];
+    const sz = c0 ? mediaSize(c0.el) : { w: 0, h: 0 };
+    if (sz.w && sz.h) {
+      const r = sz.w / sz.h;
+      val = r > 1.05 ? "1280x720" : (r < 0.95 ? "720x1280" : "720x720");
+    } else {
+      val = "1280x720";
+    }
+  }
+  const [w, h] = val.split("x").map(Number);
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w; canvas.height = h;
+  }
+}
+$("aspectSel").addEventListener("change", () => {
+  hardStop();
+  applyAspect();
+  showFrameAt(curGlobal);
+});
+
+/* ---------------- 绘制 ----------------
+   比例接近画布 → cover 铺满；
+   横竖屏不一致 → 模糊放大背景 + 原比例居中（竖屏进横屏不被裁烂） */
+function drawSmart(el, alpha) {
+  const W = canvas.width, H = canvas.height;
+  const { w: vw, h: vh } = mediaSize(el);
+  if (!vw || !vh) return;
+  const va = vw / vh, ca = W / H;
+  cx.globalAlpha = alpha;
+  if (Math.abs(va - ca) / ca < 0.15) {
+    const s = Math.max(W / vw, H / vh);
+    cx.drawImage(el, (W - vw * s) / 2, (H - vh * s) / 2, vw * s, vh * s);
+  } else {
+    const s2 = Math.max(W / vw, H / vh);
+    try {
+      cx.filter = "blur(28px) brightness(0.55)";
+      cx.drawImage(el, (W - vw * s2) / 2, (H - vh * s2) / 2, vw * s2, vh * s2);
+    } finally {
+      cx.filter = "none";
+    }
+    const s = Math.min(W / vw, H / vh);
+    cx.drawImage(el, (W - vw * s) / 2, (H - vh * s) / 2, vw * s, vh * s);
+  }
+  cx.globalAlpha = 1;
+}
+
+function fadeAlpha(local, dur) {
+  const fade = parseFloat($("fadeSel").value);
+  if (!fade) return 1;
+  let a = 1;
+  if (local < fade) a = local / fade;
+  const remain = dur - local;
+  if (remain < fade) a = Math.min(a, remain / fade);
+  return Math.max(0, Math.min(1, a));
+}
+
+function renderFrame(entry, local) {
+  cx.fillStyle = "#000";
+  cx.fillRect(0, 0, canvas.width, canvas.height);
+  drawSmart(entry.clip.el, fadeAlpha(local, entry.dur));
+}
+
+function drawIdleFrame() {
+  cx.fillStyle = "#000";
+  cx.fillRect(0, 0, canvas.width, canvas.height);
+  cx.fillStyle = "#3a4560";
+  cx.font = "20px sans-serif";
+  cx.textAlign = "center";
+  cx.fillText("预览区 · 添加视频后自动拼接", canvas.width / 2, canvas.height / 2);
+}
+drawIdleFrame();
+
+/* 定位到全局时间 t 并绘制该帧（暂停状态下用） */
+async function showFrameAt(t) {
+  if (!entries.length) { drawIdleFrame(); return; }
+  const { i, local } = locate(t);
+  curIdx = i;
+  const e = entries[i];
+  if (e.clip.type === "video") await seekTo(e.clip.video, e.clip.start + local);
+  renderFrame(e, local);
+  updateProgress(e.offset + local);
+}
+
+/* ---------------- 音频图（试听 + 导出录音） ---------------- */
+function ensureAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = audioCtx.createGain();
+    streamDest = audioCtx.createMediaStreamDestination();
+    masterGain.connect(audioCtx.destination);
+    masterGain.connect(streamDest);
+  }
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  for (const clip of clips) {
+    if (clip.type !== "video") continue;
+    if (!clip.audioNode) {
+      try {
+        clip.audioNode = audioCtx.createMediaElementSource(clip.video);
+        clip.audioNode.connect(masterGain);
+      } catch (e) { /* 已连接过则忽略 */ }
+    }
+  }
+}
+
+/* ---------------- 播放引擎（支持任意位置起播 / 拖动跳转） ---------------- */
+function pauseAllVideos() {
+  clips.forEach(c => { if (c.type === "video") c.video.pause(); });
+  if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+}
+
+let imgWallStart = 0;   // 图片片段的起播时刻（performance.now()，已扣除片内偏移）
+
+/* 进入某个片段并开始播放它（图片走时钟，视频走播放） */
+async function enterEntry(e, local) {
+  if (e.clip.type === "image") {
+    imgWallStart = performance.now() - local * 1000;
+    return true;
+  }
+  await seekTo(e.clip.video, e.clip.start + local);
+  try { await e.clip.video.play(); } catch (err) { return false; }
+  return true;
+}
+
+async function startPlay(fromTime) {
+  if (!entries.length) return;
+  ensureAudio();
+  const t = (fromTime == null || fromTime >= totalDur - 0.05) ? 0 : fromTime;
+  const { i, local } = locate(t);
+  curIdx = i;
+  isPlaying = true;
+  $("playBtn").textContent = "⏸";
+  const ok = await enterEntry(entries[i], local);
+  if (!ok || !isPlaying) { hardStop(); return; }
+  rafId = requestAnimationFrame(tick);
+}
+
+function tick() {
+  if (!isPlaying) return;
+  const e = entries[curIdx];
+  let local, ended;
+  if (e.clip.type === "image") {
+    local = (performance.now() - imgWallStart) / 1000;
+    ended = local >= e.dur;
+    local = Math.min(local, e.dur);
+  } else {
+    const v = e.clip.video;
+    local = Math.max(0, Math.min(v.currentTime - e.clip.start, e.dur));
+    ended = v.currentTime >= e.clip.end - 0.03 || v.ended;
+  }
+  renderFrame(e, local);
+  if (masterGain) masterGain.gain.value = fadeAlpha(local, e.dur);
+  updateProgress(e.offset + local);
+
+  if (ended) {
+    if (e.clip.type === "video") e.clip.video.pause();
+    if (curIdx + 1 < entries.length) {
+      curIdx++;
+      enterEntry(entries[curIdx], 0).then(ok => {
+        if (!isPlaying) return;
+        if (!ok) { hardStop(); return; }
+        rafId = requestAnimationFrame(tick);
+      });
+    } else {
+      finishTimeline();
+    }
+    return;
+  }
+  rafId = requestAnimationFrame(tick);
+}
+
+function pausePlay() {
+  isPlaying = false;
+  pauseAllVideos();
+  if (masterGain) masterGain.gain.value = 1;
+  $("playBtn").textContent = "▶";
+}
+
+function hardStop() {
+  pausePlay();
+  const cb = onTimelineDone;
+  onTimelineDone = null;
+  if (cb) cb(false);   // 被中断
+}
+
+function finishTimeline() {
+  isPlaying = false;
+  pauseAllVideos();
+  if (masterGain) masterGain.gain.value = 1;
+  $("playBtn").textContent = "▶";
+  updateProgress(totalDur);
+  const cb = onTimelineDone;
+  onTimelineDone = null;
+  if (cb) cb(true);    // 自然播完
+}
+
+$("playBtn").addEventListener("click", () => {
+  if (exporting) return;
+  if (isPlaying) pausePlay();
+  else startPlay(curGlobal);
+});
+
+/* ---------------- 进度条：点击 / 拖动跳转 ---------------- */
+const seekbar = $("seekbar");
+let scrubbing = false, wasPlaying = false, scrubBusy = false, pendingScrub = null;
+
+function scrubRatio(ev) {
+  const rect = $("seektrack").getBoundingClientRect();
+  return Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+}
+
+async function applyScrub(t) {
+  if (scrubBusy) { pendingScrub = t; return; }
+  scrubBusy = true;
+  const { i, local } = locate(t);
+  curIdx = i;
+  const e = entries[i];
+  if (e.clip.type === "video") await seekTo(e.clip.video, e.clip.start + local);
+  renderFrame(e, local);
+  scrubBusy = false;
+  if (pendingScrub != null) {
+    const p = pendingScrub;
+    pendingScrub = null;
+    applyScrub(p);
+  }
+}
+
+seekbar.addEventListener("pointerdown", ev => {
+  if (!entries.length || exporting) return;
+  scrubbing = true;
+  wasPlaying = isPlaying;
+  if (isPlaying) pausePlay();
+  seekbar.setPointerCapture(ev.pointerId);
+  const t = scrubRatio(ev) * totalDur;
+  updateProgress(t);
+  applyScrub(t);
+});
+seekbar.addEventListener("pointermove", ev => {
+  if (!scrubbing) return;
+  const t = scrubRatio(ev) * totalDur;
+  updateProgress(t);
+  applyScrub(t);
+});
+seekbar.addEventListener("pointerup", ev => {
+  if (!scrubbing) return;
+  scrubbing = false;
+  seekbar.releasePointerCapture(ev.pointerId);
+  if (wasPlaying) startPlay(curGlobal);
+});
+seekbar.addEventListener("pointercancel", () => { scrubbing = false; });
+
+/* ---------------- 导出：canvas 录制 + 混音 ---------------- */
+$("exportBtn").addEventListener("click", async () => {
+  if (exporting || !clips.length) return;
+  hardStop();
+  exporting = true;
+  refreshButtons();
+  $("exportInfo").classList.remove("hidden");
+  $("exportInfo").textContent = "⏺ 正在导出（实时渲染，请保持本标签页可见）…";
+
+  ensureAudio();
+  const stream = canvas.captureStream(30);
+  streamDest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+
+  const mime = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
+    .find(m => MediaRecorder.isTypeSupported(m)) || "";
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000 });
+  const chunks = [];
+  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  rec.onstop = () => {
+    const blob = new Blob(chunks, { type: "video/webm" });
+    const url = URL.createObjectURL(blob);
+    const name = "智能剪辑_" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".webm";
+    $("exportInfo").innerHTML =
+      `✅ 导出完成（${(blob.size / 1048576).toFixed(1)} MB）　<a href="${url}" download="${name}">点击下载 ${name}</a>`;
+    exporting = false;
+    refreshButtons();
+    setStatus("");
+  };
+
+  const progressTimer = setInterval(() => {
+    if (totalDur) setStatus(`导出中 ${Math.round(curGlobal / totalDur * 100)}%`);
+  }, 300);
+
+  onTimelineDone = (completed) => {
+    clearInterval(progressTimer);
+    rec.stop();
+    if (!completed) $("exportInfo").textContent = "⚠ 导出被中断";
+  };
+  rec.start(250);
+  startPlay(0);
+});
+
+refreshButtons();
+})();
+</script>
+</body>
+</html>

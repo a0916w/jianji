@@ -27,8 +27,13 @@ function post(path, obj){ return new Promise((res)=>{ const b=Buffer.from(JSON.s
   const jj = JSON.parse(okr.body);
   assert.strictEqual(jj.title, 'T');
   assert.ok(jj.media[0].url.includes('/media/' + job.id + '/'));
-  // 目录穿越被挡
-  assert.strictEqual((await get(`/media/${job.id}/%2e%2e%2f%2e%2e%2fetc%2fpasswd`)).status, 400);
+  assert.ok(jj.media[0].url.includes('sign='));
+  // 带签名的 media url 可正常拉取
+  assert.strictEqual((await get(jj.media[0].url)).status, 200);
+  // 不带签名拉取 media → 403
+  assert.strictEqual((await get(`/media/${job.id}/a.jpg`)).status, 403);
+  // 目录穿越被挡（带合法签名仍被拦，证明穿越校验独立生效）
+  assert.strictEqual((await get(`/media/${job.id}/%2e%2e%2f%2e%2e%2fetc%2fpasswd?sign=${s}`)).status, 400);
   // submit：签名对 + editing → rendering
   const sub = await post('/api/submit', { job: job.id, sign: s, edit_spec: { aspect: 'auto', clips: [{ index: 0, order: 0 }] } });
   assert.strictEqual(sub.status, 200);

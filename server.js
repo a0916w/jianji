@@ -36,7 +36,7 @@ const app = http.createServer(async (req, res) => {
       if (!job) return sendJson(res, 404, { error: '任务不存在' });
       return sendJson(res, 200, {
         id: job.id, title: job.title, description: job.description, tags: job.tags || [],
-        media: (job.media || []).map((m) => ({ type: m.type, url: `/media/${job.id}/${path.basename(m.path)}` })),
+        media: (job.media || []).map((m) => ({ type: m.type, url: `/media/${job.id}/${path.basename(m.path)}?sign=${sig}` })),
       });
     }
 
@@ -45,7 +45,22 @@ const app = http.createServer(async (req, res) => {
       const file = decodeURIComponent(rest.join('/'));
       const fp = safeMediaPath(id, file);
       if (!fp) return sendJson(res, 400, { error: '非法路径' });
-      try { const buf = await fs.promises.readFile(fp); res.writeHead(200); return res.end(buf); }
+      const mediaSign = u.searchParams.get('sign');
+      if (!verify(id, mediaSign)) return sendJson(res, 403, { error: '签名无效' });
+      const EXT_CT = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.mp4': 'video/mp4' };
+      const ext = require('path').extname(fp).toLowerCase();
+      const ct = EXT_CT[ext];
+      if (!ct) return sendJson(res, 415, { error: '不支持的文件类型' });
+      try {
+        const buf = await fs.promises.readFile(fp);
+        res.writeHead(200, {
+          'Content-Type': ct,
+          'X-Content-Type-Options': 'nosniff',
+          'Content-Disposition': 'inline; filename="' + require('path').basename(fp) + '"',
+          'Content-Security-Policy': "default-src 'none'; sandbox",
+        });
+        return res.end(buf);
+      }
       catch { return sendJson(res, 404, { error: '文件不存在' }); }
     }
 

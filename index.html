@@ -809,6 +809,56 @@ $("exportBtn").addEventListener("click", async () => {
 });
 
 refreshButtons();
+
+/* ---------------- Telegram 任务对接 ---------------- */
+(async function initFromJob() {
+  const q = new URLSearchParams(location.search);
+  const job = q.get("job"), sign = q.get("sign");
+  if (!job || !sign) return; // 直接访问：保持原纯前端行为
+  try {
+    const r = await fetch(`/api/job?job=${encodeURIComponent(job)}&sign=${encodeURIComponent(sign)}`);
+    if (!r.ok) throw new Error("任务加载失败");
+    const data = await r.json();
+    // 预加载媒体为 File（fetch blob → File），复用现有 addFiles
+    const files = [];
+    for (const m of data.media) {
+      const b = await (await fetch(m.url)).blob();
+      const name = m.url.split("/").pop();
+      files.push(new File([b], name, { type: b.type || (m.type === "image" ? "image/jpeg" : "video/mp4") }));
+    }
+    await addFiles(files);
+    // 「导出合成视频」改成提交：克隆节点摘除原有的本地 MediaRecorder 导出监听，
+    // 避免点击时旧的 addEventListener 处理器与新的提交逻辑同时触发。
+    const oldBtn = $("exportBtn");
+    if (oldBtn) {
+      const btn = oldBtn.cloneNode(true);
+      oldBtn.replaceWith(btn);
+      btn.textContent = "⬇ 生成并发回 Telegram";
+      btn.disabled = !clips.length;
+      btn.onclick = async () => {
+        btn.disabled = true; btn.textContent = "提交中…";
+        const edit_spec = {
+          aspect: $("aspectSel").value,
+          segLen: parseFloat($("segLenSel").value),
+          fade: parseFloat($("fadeSel").value),
+          clips: clips.map((c, i) => ({ index: i, start: c.start, end: c.end, order: i, type: c.type })),
+        };
+        const sub = await fetch("/api/submit", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ job, sign, edit_spec }),
+        });
+        const jr = await sub.json();
+        if (sub.ok && jr.ok) {
+          btn.textContent = "✓ 已提交，渲染完自动发群";
+          alert("已提交，渲染完成会自动发回 Telegram，可关闭本页");
+        } else {
+          btn.disabled = false; btn.textContent = "⬇ 生成并发回 Telegram";
+          alert(jr.error || "提交失败");
+        }
+      };
+    }
+  } catch (e) { alert(e.message); }
+})();
 })();
 </script>
 </body>

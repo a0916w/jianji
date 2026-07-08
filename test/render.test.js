@@ -28,6 +28,13 @@ assert.ok(s.includes('-ss 2'));
 assert.ok(s.includes('720') && s.includes('1280'));
 // 输出路径在最后
 assert.strictEqual(args[args.length - 1], '/w/1/out.mp4');
+// 音频：图片段静音源 + 视频段自身音轨 + concat 汇总输出 [aout] 并 -map 出去
+assert.ok(s.includes('anullsrc'), '图片段应补静音音轨');
+assert.ok(s.includes('[0:a]') === false, '图片输入(index 0)不应引用不存在的音轨 [0:a]');
+assert.ok(s.includes('[1:a]'), '视频输入(index 1)应引用自身音轨');
+assert.ok(s.includes('concat=n=2:v=0:a=1[aout]'), '音频应 concat 成 [aout]');
+assert.ok(args.includes('[aout]') && args[args.indexOf('[aout]') - 1] === '-map', '应有 -map [aout]');
+assert.ok(s.includes('-c:a aac'), '应设置音频编码器');
 
 // 3 段链:图片(3s) + 视频(0-6) + 视频(0-5),fade 0.35 → 第一转场 offset=2.650,第二转场 offset=8.300
 const job3 = {

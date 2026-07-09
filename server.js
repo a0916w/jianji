@@ -56,21 +56,79 @@ const app = http.createServer(async (req, res) => {
         return res.end('forbidden');
       }
       const jobs = db.listAll();
+      const badge = (s) => {
+        const c = s === 'done' ? 'var(--green)'
+          : s === 'failed' ? 'var(--red)'
+          : (s === 'rendering' || s === 'processing') ? 'var(--accent)'
+          : s === 'editing' ? 'var(--accent-2)'
+          : 'var(--text-dim)';
+        return `<span class="badge" style="--c:${c}">${escapeHtml(s)}</span>`;
+      };
       const rows = jobs.map((j) => {
         const editUrl = `/edit?job=${encodeURIComponent(j.id)}&sign=${sign(j.id)}`;
         const dl = j.status === 'done'
-          ? ` | <a href="/media/${encodeURIComponent(j.id)}/out.mp4?sign=${sign(j.id)}">下载</a>`
+          ? `<a class="btn btn-dl" href="/media/${encodeURIComponent(j.id)}/out.mp4?sign=${sign(j.id)}">下载</a>`
           : '';
-        return `<tr><td>${escapeHtml(j.id)}</td><td>${escapeHtml(j.status)}</td><td>${escapeHtml(j.mode)}</td>` +
-          `<td>${escapeHtml(j.source)}</td><td>${escapeHtml(j.title)}</td><td>${escapeHtml(j.created_at)}</td>` +
-          `<td><a href="${editUrl}">剪辑</a>${dl}</td></tr>`;
+        const title = j.title ? escapeHtml(j.title) : '<span class="dim">—</span>';
+        return `<tr>
+          <td class="mono">${escapeHtml(j.id)}</td>
+          <td>${badge(j.status)}</td>
+          <td class="dim">${escapeHtml(j.mode)}</td>
+          <td><span class="src">${escapeHtml(j.source)}</span></td>
+          <td class="title">${title}</td>
+          <td class="dim mono">${escapeHtml(j.created_at)}</td>
+          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a>${dl}</div></td>
+        </tr>`;
       }).join('\n');
+      const count = jobs.length;
+      const body = count ? `<div class="card"><table>
+      <thead><tr><th>编号</th><th>状态</th><th>模式</th><th>来源</th><th>标题</th><th>创建时间</th><th>操作</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`
+        : `<div class="card"><div class="empty">还没有任务 🎬<br><span class="dim">Telegram 群发相册,或直接开网页上传后点「生成到服务器」</span></div></div>`;
       const html = `<!doctype html>
-<html><head><meta charset="utf-8"><meta http-equiv="refresh" content="5"><title>任务列表</title>
-<style>body{font-family:sans-serif;margin:16px}table{border-collapse:collapse;width:100%}
-td,th{border:1px solid #ccc;padding:4px 8px;font-size:14px;text-align:left}</style></head>
-<body><h1>任务列表</h1><table><thead><tr><th>编号</th><th>状态</th><th>模式</th><th>来源</th><th>标题</th><th>创建</th><th>操作</th></tr></thead>
-<tbody>${rows}</tbody></table></body></html>`;
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="5"><title>任务列表 · 智能剪辑</title>
+<style>
+  :root{--bg:#0f1115;--panel:#181c23;--panel-2:#1f2530;--border:#2a3140;--text:#e8ecf3;--text-dim:#8b94a7;--accent:#4f7cff;--accent-2:#7c5cff;--green:#2ecc8f;--red:#ff5c6c;--radius:12px}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh;padding:24px}
+  .wrap{max-width:1180px;margin:0 auto}
+  header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px}
+  .logo{display:flex;align-items:center;gap:8px;text-decoration:none;font-size:22px;font-weight:700;letter-spacing:.5px;transition:opacity .15s}
+  .logo:hover{opacity:.82}
+  .logo .bolt{color:var(--accent)}
+  .logo .grad{background:linear-gradient(90deg,var(--accent),var(--accent-2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .meta{font-size:13px;color:var(--text-dim);display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+  .page{font-weight:600;color:var(--text);padding:3px 10px;border:1px solid var(--border);border-radius:20px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;box-shadow:0 0 8px var(--green);animation:pulse 2s infinite;margin-right:6px}
+  @keyframes pulse{50%{opacity:.35}}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;overflow-x:auto}
+  table{border-collapse:collapse;width:100%;min-width:640px}
+  th{background:var(--panel-2);color:var(--text-dim);font-size:12px;font-weight:600;letter-spacing:.5px;text-align:left;padding:12px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
+  td{padding:11px 14px;font-size:14px;border-bottom:1px solid var(--border);vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  tbody tr{transition:background .15s}
+  tbody tr:hover{background:var(--panel-2)}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+  .dim{color:var(--text-dim)}
+  .title{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .badge{display:inline-block;padding:3px 11px;border-radius:20px;font-size:12px;font-weight:600;color:var(--c);background:color-mix(in srgb,var(--c) 16%,transparent);border:1px solid color-mix(in srgb,var(--c) 38%,transparent)}
+  .src{font-size:12px;padding:2px 9px;border-radius:6px;background:var(--panel-2);border:1px solid var(--border);color:var(--text-dim)}
+  .actions{display:flex;gap:8px}
+  .btn{display:inline-block;padding:6px 14px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;white-space:nowrap;transition:opacity .15s,transform .1s}
+  .btn:hover{opacity:.88;transform:translateY(-1px)}
+  .btn-edit{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:#fff}
+  .btn-dl{background:color-mix(in srgb,var(--green) 18%,transparent);color:var(--green);border:1px solid color-mix(in srgb,var(--green) 42%,transparent)}
+  .empty{padding:64px 20px;text-align:center;font-size:16px;line-height:1.9}
+  @media(max-width:640px){body{padding:14px}.title{max-width:140px}}
+</style></head>
+<body><div class="wrap">
+  <header>
+    <a class="logo" href="/" title="返回首页"><span class="bolt">⚡</span><span class="grad">快速智能剪辑</span></a>
+    <div class="meta"><span class="page">任务列表</span><span><span class="dot"></span>每 5 秒自动刷新</span><span>共 ${count} 个</span></div>
+  </header>
+  ${body}
+</div></body></html>`;
       // no-referrer：页面地址可能带 ?sign=/?token=，避免点击链接或加载资源时经 Referer 泄漏。
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
       return res.end(html);

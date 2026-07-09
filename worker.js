@@ -75,8 +75,16 @@ async function deliverResult(job, outPath) {
   // 由用户从 /jobs 管理列表的「下载」链接取，调用方（tick）无论如何都会把状态标 done。
   if (job.source === 'web' || !job.tg_chat_id) return;
   if (!botRef) return; // 未注入 bot（如单测直接调 render）时跳过回传
-  const cap = [job.title, job.description, (job.tags || []).map((t) => '#' + t).join(' ')].filter(Boolean).join('\n');
-  const url = `${botRef.publicBase}/media/${job.id}/out.mp4?sign=${sign(job.id)}`;
+  const dlUrl = `${botRef.publicBase}/media/${job.id}/out.mp4?sign=${sign(job.id)}`;
+  const editUrl = `${botRef.publicBase}/edit?job=${job.id}&sign=${sign(job.id)}`;
+  // 说明 = 标题/描述/#标签 + 下载成品链接 + 重新剪辑链接（Telegram 会把纯文本 URL 自动变可点）。
+  const cap = [
+    job.title,
+    job.description,
+    (job.tags || []).map((t) => '#' + t).join(' '),
+    '⬇ 下载成品: ' + dlUrl,
+    '✂️ 重新剪辑: ' + editUrl,
+  ].filter(Boolean).join('\n');
   const chatId = botRef.resultChat || job.tg_chat_id;
   try {
     const size = fs.statSync(outPath).size;
@@ -85,7 +93,7 @@ async function deliverResult(job, outPath) {
       // Telegram 判定为"非视频网页内容"而拒发（已用一次真实 multipart 直传验证可行）。
       await botRef.bot.sendVideoFile(chatId, outPath, cap);
     } else {
-      await botRef.bot.sendMessage(chatId, `成品已生成（超50MB，下载）：${url}\n${cap}`);
+      await botRef.bot.sendMessage(chatId, `成品已生成（超50MB，无法直接发视频）:\n${cap}`);
     }
   } catch (e) {
     // 发送失败不回滚任务状态（渲染已成功，成品仍在磁盘/DB 里）

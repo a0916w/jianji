@@ -1,7 +1,7 @@
 // telegram-poll.js —— 轮询 Telegram getUpdates → 相册聚合 → 下载素材建任务(manual 发剪辑链接 / auto 直接建默认 spec 送渲染)。
 const fs = require('fs');
 const path = require('path');
-const { httpGet, httpPostJson } = require('./lib/util');
+const { httpGet, httpPostJson, httpPostMultipart } = require('./lib/util');
 const { groupUpdates, createBot } = require('./lib/telegram');
 const { mergeIntoPending, takeReady } = require('./lib/album-buffer');
 const { parseCaption } = require('./lib/caption');
@@ -17,7 +17,7 @@ const ALBUM_DEBOUNCE_MS = parseInt(process.env.ALBUM_DEBOUNCE_MS, 10) || 2500;
 function createDefaultBot() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return null;
-  return createBot(token, { httpGet, httpPostJson });
+  return createBot(token, { httpGet, httpPostJson, httpPostMultipart });
 }
 
 // 单个相册批次 → 建任务。

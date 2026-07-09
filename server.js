@@ -290,11 +290,13 @@ const app = http.createServer(async (req, res) => {
       if (!job) return sendJson(res, 404, { error: '任务不存在' });
       return sendJson(res, 200, {
         id: job.id, title: job.title, description: job.description, tags: job.tags || [],
+        status: job.status, source: job.source,
+        result: job.status === 'done' ? `/media/${encodeURIComponent(job.id)}/out.mp4?sign=${sign(job.id)}` : null,
         media: (job.media || []).map((m) => ({ type: m.type, url: `/media/${job.id}/${path.basename(m.path)}?sign=${sig}` })),
       });
     }
 
-    if (req.method === 'GET' && p.startsWith('/media/')) {
+    if ((req.method === 'GET' || req.method === 'HEAD') && p.startsWith('/media/')) {
       const [, , id, ...rest] = p.split('/');
       const file = decodeURIComponent(rest.join('/'));
       const fp = safeMediaPath(id, file);
@@ -305,6 +307,24 @@ const app = http.createServer(async (req, res) => {
       const ext = require('path').extname(fp).toLowerCase();
       const ct = EXT_CT[ext];
       if (!ct) return sendJson(res, 415, { error: '不支持的文件类型' });
+      // HEAD 支持是防御性的：Telegram 拉公开 URL 前会先发 HEAD 探测内容类型，之前只处理 GET
+      // 会 404（text/plain）被判定成"网页"而拒发。回传成品已改走 multipart 直传（见
+      // worker.js deliverResult），这里仍保留 HEAD 支持，覆盖 >50MB 分支的下载链接等场景。
+      if (req.method === 'HEAD') {
+        try {
+          const st = fs.statSync(fp);
+          res.writeHead(200, {
+            'Content-Type': ct,
+            'X-Content-Type-Options': 'nosniff',
+            'Content-Disposition': 'inline; filename="' + require('path').basename(fp) + '"',
+            'Content-Security-Policy': "default-src 'none'; sandbox",
+            'Referrer-Policy': 'no-referrer',
+            'Content-Length': st.size,
+          });
+          return res.end();
+        }
+        catch { return sendJson(res, 404, { error: '文件不存在' }); }
+      }
       try {
         const buf = await fs.promises.readFile(fp);
         res.writeHead(200, {

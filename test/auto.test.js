@@ -75,6 +75,8 @@ async function main() {
     },
     async sendMessage(chatId, text) { sentMessages.push({ chatId, text }); return { ok: true }; },
     async sendVideo(chatId, url, caption) { sentVideos.push({ chatId, url, caption }); return { ok: true }; },
+    // 回传成品现在走 multipart 直传文件（见 worker.js deliverResult），不再用 sendVideo(URL)。
+    async sendVideoFile(chatId, filePath, caption) { sentVideos.push({ chatId, filePath, caption }); return { ok: true }; },
   };
 
   const publicBase = 'http://localhost:9998';
@@ -130,9 +132,9 @@ async function main() {
   const kinds = info.streams.map((s) => s.codec_type);
   assert.ok(kinds.includes('video'), '成片应含视频流, got ' + kinds.join(','));
 
-  // 渲染完成后 worker 应把成片经 sendVideo 回传(auto/manual 都走同一 deliverResult)
+  // 渲染完成后 worker 应把成片经 sendVideoFile 直传文件回传(auto/manual 都走同一 deliverResult)
   assert.strictEqual(sentVideos.length, 1, '渲染完成应回传一次成片');
-  assert.ok(sentVideos[0].url.includes(`/media/${job.id}/out.mp4`), 'sendVideo url 应指向成片: ' + sentVideos[0].url);
+  assert.strictEqual(sentVideos[0].filePath, out, 'sendVideoFile 应传入成片的实际文件路径: ' + sentVideos[0].filePath);
 
   console.log('AUTO_OK', JSON.stringify({ jobId: job.id, seg: vidClip, duration: info.format.duration, streams: kinds }));
 }

@@ -81,7 +81,9 @@ async function deliverResult(job, outPath) {
   try {
     const size = fs.statSync(outPath).size;
     if (size <= 50 * 1024 * 1024) {
-      await botRef.bot.sendVideo(chatId, url, cap);
+      // 直传字节而非发 URL：Telegram 拉 URL 前会先发 HEAD，/media 路由曾经只支持 GET 会 404，
+      // Telegram 判定为"非视频网页内容"而拒发（已用一次真实 multipart 直传验证可行）。
+      await botRef.bot.sendVideoFile(chatId, outPath, cap);
     } else {
       await botRef.bot.sendMessage(chatId, `成品已生成（超50MB，下载）：${url}\n${cap}`);
     }

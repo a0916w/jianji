@@ -184,8 +184,8 @@
   <div class="actions">
     <button class="btn btn-smart" id="smartBtn" disabled>✨ 智能选段（可选：自动挑精彩部分）</button>
     <button class="btn btn-plain" id="resetBtn" disabled>↺ 重置为完整拼接</button>
-    <button class="btn btn-export" id="exportBtn" disabled>⬇ 导出合成视频</button>
-    <button class="btn btn-export" id="serverBtn" disabled>⬆ 生成到服务器</button>
+    <button class="btn btn-export" id="exportBtn" disabled>🖥 浏览器生成</button>
+    <button class="btn btn-export" id="serverBtn" disabled>☁ 后台生成</button>
     <span id="status"></span>
   </div>
 
@@ -857,7 +857,7 @@ $("serverBtn").addEventListener("click", async () => {
     alert("已提交，服务器渲染中，可在任务列表查看/下载");
   } catch (e) {
     alert(e.message || String(e));
-    setStatus("⚠ 生成到服务器失败");
+    setStatus("⚠ 后台生成失败");
   } finally {
     refreshButtons();
   }

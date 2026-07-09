@@ -56,6 +56,15 @@ const app = http.createServer(async (req, res) => {
         return res.end('forbidden');
       }
       const jobs = db.listAll();
+      const jobDetails = {};
+      for (const j of jobs) {
+        jobDetails[j.id] = {
+          title: j.title || '', description: j.description || '', tags: j.tags || [],
+          status: j.status, mode: j.mode, source: j.source, created_at: j.created_at,
+          dl: j.status === 'done' ? `/media/${encodeURIComponent(j.id)}/out.mp4?sign=${sign(j.id)}` : null,
+        };
+      }
+      const jobDetailsJson = JSON.stringify(jobDetails).replace(/</g, '\\u003c');
       const badge = (s) => {
         const c = s === 'done' ? 'var(--green)'
           : s === 'failed' ? 'var(--red)'
@@ -67,7 +76,7 @@ const app = http.createServer(async (req, res) => {
       const rows = jobs.map((j) => {
         const editUrl = `/edit?job=${encodeURIComponent(j.id)}&sign=${sign(j.id)}`;
         const dl = j.status === 'done'
-          ? `<a class="btn btn-dl" href="/media/${encodeURIComponent(j.id)}/out.mp4?sign=${sign(j.id)}">下载</a>`
+          ? `<a class="btn btn-dl" href="/media/${encodeURIComponent(j.id)}/out.mp4?sign=${sign(j.id)}" download="out-${encodeURIComponent(j.id)}.mp4">下载</a>`
           : '';
         const title = j.title ? escapeHtml(j.title) : '<span class="dim">—</span>';
         return `<tr>
@@ -77,7 +86,7 @@ const app = http.createServer(async (req, res) => {
           <td><span class="src">${escapeHtml(j.source)}</span></td>
           <td class="title">${title}</td>
           <td class="dim mono">${escapeHtml(j.created_at)}</td>
-          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a>${dl}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
+          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${dl}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
         </tr>`;
       }).join('\n');
       const count = jobs.length;
@@ -120,7 +129,20 @@ const app = http.createServer(async (req, res) => {
   .btn-edit{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:#fff}
   .btn-dl{background:color-mix(in srgb,var(--green) 18%,transparent);color:var(--green);border:1px solid color-mix(in srgb,var(--green) 42%,transparent)}
   .btn-del{background:color-mix(in srgb,var(--red) 16%,transparent);color:var(--red);border:1px solid color-mix(in srgb,var(--red) 40%,transparent);cursor:pointer;font-family:inherit}
+  .btn-info{background:var(--panel-2);color:var(--text);border:1px solid var(--border);cursor:pointer;font-family:inherit}
   .empty{padding:64px 20px;text-align:center;font-size:16px;line-height:1.9}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:20px;z-index:100}
+  .modal[hidden]{display:none}
+  .modal-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);max-width:560px;width:100%;max-height:80vh;overflow-y:auto;padding:22px 24px;position:relative}
+  .modal-close{position:absolute;top:14px;right:16px;background:none;border:none;color:var(--text-dim);font-size:22px;line-height:1;cursor:pointer;font-family:inherit}
+  .modal-close:hover{color:var(--text)}
+  .modal-title{font-size:18px;font-weight:700;margin-bottom:16px;padding-right:28px;word-break:break-word}
+  .modal-field{margin-bottom:14px}
+  .modal-label{font-size:12px;color:var(--text-dim);font-weight:600;letter-spacing:.5px;margin-bottom:4px}
+  .modal-value{font-size:14px;white-space:pre-wrap;word-break:break-word}
+  .modal-tags{display:flex;flex-wrap:wrap;gap:6px}
+  .modal-tags .src{background:var(--panel-2)}
+  .modal-actions{margin-top:18px}
   @media(max-width:640px){body{padding:14px}.title{max-width:140px}}
 </style></head>
 <body><div class="wrap">
@@ -130,7 +152,19 @@ const app = http.createServer(async (req, res) => {
   </header>
   ${body}
 </div>
+<div id="modal" class="modal" hidden>
+  <div class="modal-card">
+    <button type="button" class="modal-close" id="modalClose" aria-label="关闭">&times;</button>
+    <div class="modal-title" id="modalTitle"></div>
+    <div class="modal-field"><div class="modal-label">状态 / 模式 / 来源</div><div class="modal-value" id="modalMeta"></div></div>
+    <div class="modal-field"><div class="modal-label">创建时间</div><div class="modal-value" id="modalCreated"></div></div>
+    <div class="modal-field"><div class="modal-label">描述</div><div class="modal-value" id="modalDesc"></div></div>
+    <div class="modal-field"><div class="modal-label">标签</div><div class="modal-tags" id="modalTags"></div></div>
+    <div class="modal-actions"><a class="btn btn-dl" id="modalDl" href="#">下载成品</a></div>
+  </div>
+</div>
 <script>
+  const JOB_DETAILS = ${jobDetailsJson};
   const TOKEN = new URLSearchParams(location.search).get('token');
   document.addEventListener('click', (e) => {
     const btn = e.target.closest('.btn-del');
@@ -142,6 +176,49 @@ const app = http.createServer(async (req, res) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id }),
     }).then((res) => { if (res.ok) location.reload(); else alert('删除失败'); });
+  });
+
+  const modal = document.getElementById('modal');
+  const modalTitle = document.getElementById('modalTitle');
+  const modalMeta = document.getElementById('modalMeta');
+  const modalCreated = document.getElementById('modalCreated');
+  const modalDesc = document.getElementById('modalDesc');
+  const modalTags = document.getElementById('modalTags');
+  const modalDl = document.getElementById('modalDl');
+
+  function openModal(id) {
+    const d = JOB_DETAILS[id];
+    if (!d) return;
+    modalTitle.textContent = d.title || '（无标题）';
+    modalMeta.textContent = (d.status || '—') + ' / ' + (d.mode || '—') + ' / ' + (d.source || '—');
+    modalCreated.textContent = d.created_at || '—';
+    modalDesc.textContent = d.description || '（无描述）';
+    modalTags.replaceChildren();
+    (d.tags || []).forEach((t) => {
+      const span = document.createElement('span');
+      span.className = 'src';
+      span.textContent = t;
+      modalTags.appendChild(span);
+    });
+    if (d.dl) {
+      modalDl.href = d.dl;
+      modalDl.setAttribute('download', 'out-' + id + '.mp4');
+      modalDl.hidden = false;
+    } else {
+      modalDl.hidden = true;
+    }
+    modal.hidden = false;
+  }
+  function closeModal() { modal.hidden = true; }
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn-info');
+    if (btn) { openModal(btn.dataset.id); return; }
+    if (e.target.id === 'modalClose') { closeModal(); return; }
+    if (e.target === modal) { closeModal(); return; }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !modal.hidden) closeModal();
   });
 </script>
 </body></html>`;

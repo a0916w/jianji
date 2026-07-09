@@ -29,6 +29,27 @@ function postRaw(p, buf) { return new Promise((res) => { const r = http.request(
   assert.ok(listOk.body.includes('种子任务'), 'jobs 列表应包含种子任务标题');
   assert.ok(listOk.body.includes(`/edit?job=${seeded.id}&sign=`), 'jobs 列表应包含剪辑链接');
 
+  // -------- 详情弹窗：JOB_DETAILS 数据 + 弹窗 DOM + 下载按钮 download 属性 --------
+  assert.ok(listOk.body.includes('JOB_DETAILS'), 'jobs 列表应内嵌 JOB_DETAILS 数据');
+  assert.ok(listOk.body.includes('btn-info'), 'jobs 列表应包含详情按钮');
+  assert.ok(listOk.body.includes('id="modal"'), 'jobs 列表应包含详情弹窗元素');
+
+  const doneForDl = db.create({ media: [], mode: 'manual', status: 'done', source: 'web', title: '可下载任务' });
+  const listWithDl = await get('/jobs?token=adm-secret');
+  assert.ok(
+    new RegExp(`href="/media/${doneForDl.id}/out\\.mp4\\?sign=[^"]+"\\s+download="out-${doneForDl.id}\\.mp4"`).test(listWithDl.body),
+    '已完成任务的下载链接应带 download 属性'
+  );
+
+  // -------- JOB_DETAILS 中的 < 需被转义为 <，防止标题内容跳出 <script> --------
+  const xssTitleJob = db.create({ media: [], mode: 'manual', status: 'editing', source: 'web', title: '</script><script>alert(1)</script>' });
+  const listWithXss = await get('/jobs?token=adm-secret');
+  const scriptStart = listWithXss.body.indexOf('const JOB_DETAILS');
+  const scriptEnd = listWithXss.body.indexOf('</script>', scriptStart);
+  const jobDetailsSlice = listWithXss.body.slice(scriptStart, scriptEnd);
+  assert.ok(!jobDetailsSlice.includes('</script>'), 'JOB_DETAILS 数据段不应包含未转义的 </script>');
+  assert.ok(jobDetailsSlice.includes('\\u003cscript>alert(1)\\u003c/script>'), 'JOB_DETAILS 中 < 应被转义为 \\u003c');
+
   // -------- web 上传落库流程 --------
   const wj = await post('/api/web-job', { title: '网页任务', description: 'd', tags: ['a'] });
   assert.strictEqual(wj.status, 200);

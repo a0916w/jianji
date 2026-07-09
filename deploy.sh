@@ -6,10 +6,16 @@ REPO=https://github.com/a0916w/jianji.git
 [ "$(id -u)" -eq 0 ] || { echo "用 root 跑"; exit 1; }
 apt-get update -y && apt-get install -y ffmpeg nodejs npm git python3 make g++
 id -u "$SVC_USER" >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin "$SVC_USER"
-# /opt/jianji 属主是 $SVC_USER，root 跑 git 会报 dubious ownership —— 先放行。
-git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
-if [ -d "$APP_DIR/.git" ]; then git -C "$APP_DIR" pull --ff-only; else git clone "$REPO" "$APP_DIR"; fi
-( cd "$APP_DIR" && npm install --omit=dev )   # better-sqlite3(预编译二进制,无则本地编译)
+# git/npm 一律以服务账户 $SVC_USER 身份跑：属主自己操作既无 dubious-ownership 报错，
+# 也不给 root 信任一个服务账户可写的库（否则被埋 .git/hooks 会以 root 执行 = 提权）。
+# $SVC_USER 是 nologin 无家目录账户，显式给 HOME=$APP_DIR 供 git/npm 写配置与缓存。
+install -d -o "$SVC_USER" -g "$SVC_USER" "$APP_DIR"
+if [ -d "$APP_DIR/.git" ]; then
+  sudo -u "$SVC_USER" env HOME="$APP_DIR" git -C "$APP_DIR" pull --ff-only
+else
+  sudo -u "$SVC_USER" env HOME="$APP_DIR" git clone "$REPO" "$APP_DIR"
+fi
+sudo -u "$SVC_USER" env HOME="$APP_DIR" bash -c 'cd "$1" && npm install --omit=dev' _ "$APP_DIR"
 install -d -o "$SVC_USER" -g "$SVC_USER" "$APP_DIR/work"
 chown -R "$SVC_USER":"$SVC_USER" "$APP_DIR"
 if [ ! -f "$ENV_FILE" ]; then

@@ -57,14 +57,16 @@
 
   /* 片段列表 */
   #clips {
-    display: flex; gap: 14px; overflow-x: auto; padding: 6px 2px 14px;
+    display: flex; flex-direction: column; gap: 10px; padding: 6px 2px 12px;
     min-height: 40px;
   }
   .clip-card {
-    flex: 0 0 240px; background: var(--panel); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 10px; cursor: grab; position: relative;
-    transition: transform .15s, border-color .15s;
+    display: flex; gap: 12px; align-items: center; width: 100%;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 10px 12px; cursor: grab; position: relative;
+    transition: border-color .15s, background .15s;
   }
+  .clip-body { flex: 1; min-width: 0; }
   .clip-card.dragging { opacity: .4; }
   .clip-card:hover { border-color: #3a4560; }
   .clip-card .order {
@@ -79,8 +81,8 @@
   }
   .clip-card .del:hover { background: var(--red); }
   .filmstrip {
-    display: flex; gap: 2px; border-radius: 8px; overflow: hidden;
-    height: 62px; background: #000; margin-bottom: 8px;
+    flex: 0 0 112px; display: flex; gap: 2px; border-radius: 8px; overflow: hidden;
+    height: 72px; background: #000;
   }
   .filmstrip img { flex: 1; object-fit: cover; min-width: 0; height: 100%; }
   .clip-name {
@@ -412,9 +414,11 @@ function renderClips() {
       <div class="order">${i + 1}</div>
       <button class="del" title="删除">✕</button>
       <div class="filmstrip">${clip.thumbs.map(t => `<img src="${t}">`).join("") || ""}</div>
-      <div class="clip-name" title="${clip.name}">${clip.name}</div>
-      <div class="clip-meta">${metaLine}</div>
-      ${controls}
+      <div class="clip-body">
+        <div class="clip-name" title="${clip.name}">${clip.name}</div>
+        <div class="clip-meta">${metaLine}</div>
+        ${controls}
+      </div>
     `;
 
     card.querySelector(".del").addEventListener("click", () => {
@@ -880,7 +884,7 @@ refreshButtons();
     const files = [];
     for (const m of data.media) {
       const b = await (await fetch(m.url)).blob();
-      const name = m.url.split("/").pop();
+      const name = (m.url.split("/").pop() || "").split("?")[0]; // 去掉 ?sign 查询串，卡片名才干净
       files.push(new File([b], name, { type: b.type || (m.type === "image" ? "image/jpeg" : "video/mp4") }));
     }
     const startLen = clips.length;
@@ -893,7 +897,7 @@ refreshButtons();
       newClips.forEach((c, k) => { c.mediaIndex = k; });
     } else {
       const nameToIndex = new Map();
-      data.media.forEach((m, k) => { nameToIndex.set(m.url.split("/").pop(), k); });
+      data.media.forEach((m, k) => { nameToIndex.set((m.url.split("/").pop() || "").split("?")[0], k); });
       newClips.forEach((c) => {
         if (nameToIndex.has(c.name)) c.mediaIndex = nameToIndex.get(c.name);
       });

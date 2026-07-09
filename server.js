@@ -99,7 +99,7 @@ const app = http.createServer(async (req, res) => {
         : `<div class="card"><div class="empty">还没有任务 🎬<br><span class="dim">Telegram 群发相册,或直接开网页上传后点「生成到服务器」</span></div></div>`;
       const html = `<!doctype html>
 <html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="5"><title>任务列表 · 智能剪辑</title>
+<title>任务列表 · 智能剪辑</title>
 <style>
   :root{--bg:#0f1115;--panel:#181c23;--panel-2:#1f2530;--border:#2a3140;--text:#e8ecf3;--text-dim:#8b94a7;--accent:#4f7cff;--accent-2:#7c5cff;--green:#2ecc8f;--red:#ff5c6c;--radius:12px}
   *{box-sizing:border-box;margin:0;padding:0}
@@ -112,8 +112,6 @@ const app = http.createServer(async (req, res) => {
   .logo .grad{background:linear-gradient(90deg,var(--accent),var(--accent-2));-webkit-background-clip:text;background-clip:text;color:transparent}
   .meta{font-size:13px;color:var(--text-dim);display:flex;gap:16px;align-items:center;flex-wrap:wrap}
   .page{font-weight:600;color:var(--text);padding:3px 10px;border:1px solid var(--border);border-radius:20px}
-  .dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;box-shadow:0 0 8px var(--green);animation:pulse 2s infinite;margin-right:6px}
-  @keyframes pulse{50%{opacity:.35}}
   .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;overflow-x:auto}
   table{border-collapse:collapse;width:100%;min-width:640px}
   th{background:var(--panel-2);color:var(--text-dim);font-size:12px;font-weight:600;letter-spacing:.5px;text-align:left;padding:12px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
@@ -153,7 +151,7 @@ const app = http.createServer(async (req, res) => {
 <body><div class="wrap">
   <header>
     <a class="logo" href="/" title="返回首页"><span class="bolt">⚡</span><span class="grad">快速智能剪辑</span></a>
-    <div class="meta"><span class="page">任务列表</span><span><span class="dot"></span>每 5 秒自动刷新</span><span>共 ${count} 个</span></div>
+    <div class="meta"><span class="page">任务列表</span><span>共 ${count} 个</span></div>
   </header>
   ${body}
 </div>

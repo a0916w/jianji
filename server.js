@@ -75,6 +75,9 @@ const app = http.createServer(async (req, res) => {
       };
       const rows = jobs.map((j) => {
         const editUrl = `/edit?job=${encodeURIComponent(j.id)}&sign=${sign(j.id)}`;
+        const play = j.status === 'done'
+          ? `<button class="btn btn-play" data-play="${escapeHtml(j.id)}">播放</button>`
+          : '';
         const dl = j.status === 'done'
           ? `<a class="btn btn-dl" href="/media/${encodeURIComponent(j.id)}/out.mp4?sign=${sign(j.id)}" download="out-${encodeURIComponent(j.id)}.mp4">下载</a>`
           : '';
@@ -86,7 +89,7 @@ const app = http.createServer(async (req, res) => {
           <td><span class="src">${escapeHtml(j.source)}</span></td>
           <td class="title">${title}</td>
           <td class="dim mono">${escapeHtml(j.created_at)}</td>
-          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${dl}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
+          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${play}${dl}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
         </tr>`;
       }).join('\n');
       const count = jobs.length;
@@ -130,6 +133,7 @@ const app = http.createServer(async (req, res) => {
   .btn-dl{background:color-mix(in srgb,var(--green) 18%,transparent);color:var(--green);border:1px solid color-mix(in srgb,var(--green) 42%,transparent)}
   .btn-del{background:color-mix(in srgb,var(--red) 16%,transparent);color:var(--red);border:1px solid color-mix(in srgb,var(--red) 40%,transparent);cursor:pointer;font-family:inherit}
   .btn-info{background:var(--panel-2);color:var(--text);border:1px solid var(--border);cursor:pointer;font-family:inherit}
+  .btn-play{background:color-mix(in srgb,var(--accent) 20%,transparent);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);cursor:pointer;font-family:inherit}
   .empty{padding:64px 20px;text-align:center;font-size:16px;line-height:1.9}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:20px;z-index:100}
   .modal[hidden]{display:none}
@@ -140,6 +144,7 @@ const app = http.createServer(async (req, res) => {
   .modal-field{margin-bottom:14px}
   .modal-label{font-size:12px;color:var(--text-dim);font-weight:600;letter-spacing:.5px;margin-bottom:4px}
   .modal-value{font-size:14px;white-space:pre-wrap;word-break:break-word}
+  .modal-video{width:100%;max-height:60vh;border-radius:8px;background:#000;display:block}
   .modal-tags{display:flex;flex-wrap:wrap;gap:6px}
   .modal-tags .src{background:var(--panel-2)}
   .modal-actions{margin-top:18px}
@@ -156,6 +161,7 @@ const app = http.createServer(async (req, res) => {
   <div class="modal-card">
     <button type="button" class="modal-close" id="modalClose" aria-label="关闭">&times;</button>
     <div class="modal-title" id="modalTitle"></div>
+    <div class="modal-field" id="modalPlayerField" hidden><div class="modal-label">在线播放</div><video id="modalVideo" class="modal-video" controls preload="metadata" playsinline></video></div>
     <div class="modal-field"><div class="modal-label">状态 / 模式 / 来源</div><div class="modal-value" id="modalMeta"></div></div>
     <div class="modal-field"><div class="modal-label">创建时间</div><div class="modal-value" id="modalCreated"></div></div>
     <div class="modal-field"><div class="modal-label">描述</div><div class="modal-value" id="modalDesc"></div></div>
@@ -185,6 +191,8 @@ const app = http.createServer(async (req, res) => {
   const modalDesc = document.getElementById('modalDesc');
   const modalTags = document.getElementById('modalTags');
   const modalDl = document.getElementById('modalDl');
+  const modalVideo = document.getElementById('modalVideo');
+  const modalPlayerField = document.getElementById('modalPlayerField');
 
   function openModal(id) {
     const d = JOB_DETAILS[id];
@@ -204,16 +212,27 @@ const app = http.createServer(async (req, res) => {
       modalDl.href = d.dl;
       modalDl.setAttribute('download', 'out-' + id + '.mp4');
       modalDl.hidden = false;
+      if (modalVideo.getAttribute('src') !== d.dl) modalVideo.src = d.dl;
+      modalPlayerField.hidden = false;
     } else {
       modalDl.hidden = true;
+      modalPlayerField.hidden = true;
+      modalVideo.pause();
+      modalVideo.removeAttribute('src');
+      modalVideo.load();
     }
     modal.hidden = false;
   }
-  function closeModal() { modal.hidden = true; }
+  function closeModal() {
+    modal.hidden = true;
+    modalVideo.pause();
+  }
 
   document.addEventListener('click', (e) => {
     const btn = e.target.closest('.btn-info');
     if (btn) { openModal(btn.dataset.id); return; }
+    const playBtn = e.target.closest('.btn-play');
+    if (playBtn) { openModal(playBtn.dataset.play); return; }
     if (e.target.id === 'modalClose') { closeModal(); return; }
     if (e.target === modal) { closeModal(); return; }
   });
@@ -310,31 +329,44 @@ const app = http.createServer(async (req, res) => {
       // HEAD 支持是防御性的：Telegram 拉公开 URL 前会先发 HEAD 探测内容类型，之前只处理 GET
       // 会 404（text/plain）被判定成"网页"而拒发。回传成品已改走 multipart 直传（见
       // worker.js deliverResult），这里仍保留 HEAD 支持，覆盖 >50MB 分支的下载链接等场景。
+      const baseName = require('path').basename(fp);
+      const mediaHeaders = {
+        'Content-Type': ct,
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Disposition': 'inline; filename="' + baseName + '"',
+        'Content-Security-Policy': "default-src 'none'; sandbox",
+        'Referrer-Policy': 'no-referrer', // 防带 ?sign= 的媒体地址经 Referer 泄漏
+        'Accept-Ranges': 'bytes',
+      };
       if (req.method === 'HEAD') {
         try {
           const st = fs.statSync(fp);
-          res.writeHead(200, {
-            'Content-Type': ct,
-            'X-Content-Type-Options': 'nosniff',
-            'Content-Disposition': 'inline; filename="' + require('path').basename(fp) + '"',
-            'Content-Security-Policy': "default-src 'none'; sandbox",
-            'Referrer-Policy': 'no-referrer',
-            'Content-Length': st.size,
-          });
+          res.writeHead(200, { ...mediaHeaders, 'Content-Length': st.size });
           return res.end();
         }
         catch { return sendJson(res, 404, { error: '文件不存在' }); }
       }
       try {
-        const buf = await fs.promises.readFile(fp);
-        res.writeHead(200, {
-          'Content-Type': ct,
-          'X-Content-Type-Options': 'nosniff',
-          'Content-Disposition': 'inline; filename="' + require('path').basename(fp) + '"',
-          'Content-Security-Policy': "default-src 'none'; sandbox",
-          'Referrer-Policy': 'no-referrer', // 防带 ?sign= 的媒体地址经 Referer 泄漏
-        });
-        return res.end(buf);
+        const st = fs.statSync(fp);
+        const total = st.size;
+        // 支持 HTTP Range：HTML5 <video> 在线播放 / 拖动进度依赖 206 分块，
+        // 尤其 Safari/iOS 不发或不认全量响应时会整段拒播。同时改为流式，避免整片读进内存。
+        const range = req.headers.range;
+        const m = range && /^bytes=(\d*)-(\d*)$/.exec(String(range).trim());
+        if (m && (m[1] || m[2])) {
+          let start = m[1] === '' ? NaN : parseInt(m[1], 10);
+          let end = m[2] === '' ? NaN : parseInt(m[2], 10);
+          if (Number.isNaN(start)) { start = Math.max(0, total - end); end = total - 1; } // bytes=-N 后缀
+          if (Number.isNaN(end)) end = total - 1;
+          if (start > end || start < 0 || end >= total) {
+            res.writeHead(416, { 'Content-Range': 'bytes */' + total, 'Accept-Ranges': 'bytes' });
+            return res.end();
+          }
+          res.writeHead(206, { ...mediaHeaders, 'Content-Range': 'bytes ' + start + '-' + end + '/' + total, 'Content-Length': end - start + 1 });
+          return fs.createReadStream(fp, { start, end }).pipe(res);
+        }
+        res.writeHead(200, { ...mediaHeaders, 'Content-Length': total });
+        return fs.createReadStream(fp).pipe(res);
       }
       catch { return sendJson(res, 404, { error: '文件不存在' }); }
     }

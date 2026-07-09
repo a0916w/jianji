@@ -6,6 +6,8 @@ REPO=https://github.com/a0916w/jianji.git
 [ "$(id -u)" -eq 0 ] || { echo "用 root 跑"; exit 1; }
 apt-get update -y && apt-get install -y ffmpeg nodejs npm git python3 make g++
 id -u "$SVC_USER" >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin "$SVC_USER"
+# /opt/jianji 属主是 $SVC_USER，root 跑 git 会报 dubious ownership —— 先放行。
+git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
 if [ -d "$APP_DIR/.git" ]; then git -C "$APP_DIR" pull --ff-only; else git clone "$REPO" "$APP_DIR"; fi
 ( cd "$APP_DIR" && npm install --omit=dev )   # better-sqlite3(预编译二进制,无则本地编译)
 install -d -o "$SVC_USER" -g "$SVC_USER" "$APP_DIR/work"

@@ -40,5 +40,11 @@ assert.strictEqual(claimed.id, j.id);
 assert.strictEqual(db2.get(j.id).status, 'processing');
 assert.strictEqual(db2.claimNext('rendering', 'processing'), null);
 
+// remove：删除后 get 返回 null，重复删除返回 false
+const jr = db.create({ media: [], tags: [], mode: 'manual' });
+assert.strictEqual(db.remove(jr.id), true);
+assert.strictEqual(db.get(jr.id), null);
+assert.strictEqual(db.remove(jr.id), false);
+
 fs.unlinkSync(p);
 console.log('DB_OK');

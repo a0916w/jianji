@@ -73,6 +73,36 @@ function postRaw(p, buf) { return new Promise((res) => { const r = http.request(
   assert.strictEqual(subProc.status, 409);
   assert.strictEqual(db.get(procJob.id).status, 'processing'); // 未被改动
 
+  // -------- /api/job-delete：admin-only，删记录+删文件 --------
+  assert.strictEqual((await post('/api/job-delete', { id: seeded.id })).status, 403); // 无 token
+  assert.strictEqual((await post('/api/job-delete?token=wrong', { id: seeded.id })).status, 403); // 错 token
+  assert.ok(db.get(seeded.id), '错误鉴权不应删除任务'); // 未被误删
+
+  const delJob = db.create({ media: [], mode: 'manual', status: 'done', source: 'web', title: '待删除' });
+  const delDir = path.join(process.env.WORK_DIR, String(delJob.id));
+  fs.mkdirSync(delDir, { recursive: true });
+  fs.writeFileSync(path.join(delDir, 'x.jpg'), 'x');
+  assert.ok(fs.existsSync(path.join(delDir, 'x.jpg')));
+
+  const delRes = await post('/api/job-delete?token=adm-secret', { id: delJob.id });
+  assert.strictEqual(delRes.status, 200);
+  assert.strictEqual(JSON.parse(delRes.body).ok, true);
+  assert.strictEqual(db.get(delJob.id), null);
+  assert.strictEqual(fs.existsSync(delDir), false, '任务目录应被一并删除');
+
+  // 不存在的 id → 404
+  const del404 = await post('/api/job-delete?token=adm-secret', { id: '999999' });
+  assert.strictEqual(del404.status, 404);
+
+  // 路径穿越：db.get 先返回 null → 404，且不触碰 WORK_DIR 外的文件系统
+  const marker = 'jj-webjobs-outside-marker-' + Date.now();
+  const outside = path.join(process.env.WORK_DIR, '..', marker);
+  fs.writeFileSync(outside, 'should-not-be-touched');
+  const delTraversal = await post('/api/job-delete?token=adm-secret', { id: '../' + marker });
+  assert.ok([400, 404].includes(delTraversal.status));
+  assert.ok(fs.existsSync(outside), '路径穿越不应删除 WORK_DIR 外的文件');
+  fs.unlinkSync(outside);
+
   app.close();
   console.log('WEBJOBS_OK');
 })().catch((e) => { console.error('FAIL', e); process.exit(1); });

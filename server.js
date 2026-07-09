@@ -77,7 +77,7 @@ const app = http.createServer(async (req, res) => {
           <td><span class="src">${escapeHtml(j.source)}</span></td>
           <td class="title">${title}</td>
           <td class="dim mono">${escapeHtml(j.created_at)}</td>
-          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a>${dl}</div></td>
+          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a>${dl}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
         </tr>`;
       }).join('\n');
       const count = jobs.length;
@@ -119,6 +119,7 @@ const app = http.createServer(async (req, res) => {
   .btn:hover{opacity:.88;transform:translateY(-1px)}
   .btn-edit{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:#fff}
   .btn-dl{background:color-mix(in srgb,var(--green) 18%,transparent);color:var(--green);border:1px solid color-mix(in srgb,var(--green) 42%,transparent)}
+  .btn-del{background:color-mix(in srgb,var(--red) 16%,transparent);color:var(--red);border:1px solid color-mix(in srgb,var(--red) 40%,transparent);cursor:pointer;font-family:inherit}
   .empty{padding:64px 20px;text-align:center;font-size:16px;line-height:1.9}
   @media(max-width:640px){body{padding:14px}.title{max-width:140px}}
 </style></head>
@@ -128,7 +129,22 @@ const app = http.createServer(async (req, res) => {
     <div class="meta"><span class="page">任务列表</span><span><span class="dot"></span>每 5 秒自动刷新</span><span>共 ${count} 个</span></div>
   </header>
   ${body}
-</div></body></html>`;
+</div>
+<script>
+  const TOKEN = new URLSearchParams(location.search).get('token');
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn-del');
+    if (!btn) return;
+    const id = btn.dataset.id;
+    if (!confirm('确认删除任务 #' + id + '?（会一并删除该任务的文件，不可恢复）')) return;
+    fetch('/api/job-delete?token=' + encodeURIComponent(TOKEN), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    }).then((res) => { if (res.ok) location.reload(); else alert('删除失败'); });
+  });
+</script>
+</body></html>`;
       // no-referrer：页面地址可能带 ?sign=/?token=，避免点击链接或加载资源时经 Referer 泄漏。
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
       return res.end(html);
@@ -224,6 +240,36 @@ const app = http.createServer(async (req, res) => {
         return res.end(buf);
       }
       catch { return sendJson(res, 404, { error: '文件不存在' }); }
+    }
+
+    if (req.method === 'POST' && p === '/api/job-delete') {
+      const body = await readJsonBody(req);
+      const token = u.searchParams.get('token') || body.token;
+      if (!verifyAdminToken(token)) {
+        res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
+        return res.end(JSON.stringify({ error: 'forbidden' }));
+      }
+      const id = body.id;
+      if (typeof id !== 'string' || !id) {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
+        return res.end(JSON.stringify({ error: 'id 缺失' }));
+      }
+      const job = db.get(id);
+      if (!job) {
+        res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
+        return res.end(JSON.stringify({ error: '任务不存在' }));
+      }
+      // 仅当解析路径确实是 WORK_DIR 的直接子目录（等同 safeMediaPath 的防穿越校验）才允许删文件
+      const base = path.resolve(WORK_DIR);
+      const dir = path.resolve(WORK_DIR, String(id));
+      if (dir === base || !dir.startsWith(base + path.sep) || path.dirname(dir) !== base) {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
+        return res.end(JSON.stringify({ error: '非法路径' }));
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+      db.remove(id);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
+      return res.end(JSON.stringify({ ok: true }));
     }
 
     if (req.method === 'POST' && p === '/api/submit') {

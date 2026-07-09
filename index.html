@@ -92,7 +92,8 @@
   .clip-meta { font-size: 11px; color: var(--text-dim); margin-bottom: 8px; }
   .clip-meta .picked { color: var(--green); }
   .trim-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
-  .trim-row input[type=range] { flex: 1; accent-color: var(--accent); height: 4px; }
+  .trim-row input[type=range] { flex: 1 1 0; min-width: 0; accent-color: var(--accent); height: 4px; }
+  .trim-row .val { flex: 0 0 auto; white-space: nowrap; min-width: 34px; text-align: right; }
 
   /* 操作按钮 */
   .actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0 22px; }
@@ -407,9 +408,9 @@ function renderClips() {
       ? `🖼 图片 · <span class="picked">显示 ${picked}s</span>`
       : `总长 ${clip.duration.toFixed(1)}s · <span class="picked">已选 ${picked}s${clip.smart ? " ✨" : ""}</span>`;
     const controls = isImg
-      ? `<div class="trim-row">时长 <input type="range" class="imgDur" min="0.5" max="10" step="0.5" value="${clip.end - clip.start}"> ${picked}s</div>`
-      : `<div class="trim-row">起 <input type="range" class="trimStart" min="0" max="${clip.duration}" step="0.1" value="${clip.start}"> ${clip.start.toFixed(1)}s</div>
-         <div class="trim-row">止 <input type="range" class="trimEnd" min="0" max="${clip.duration}" step="0.1" value="${clip.end}"> ${clip.end.toFixed(1)}s</div>`;
+      ? `<div class="trim-row">时长 <input type="range" class="imgDur" min="0.5" max="10" step="0.5" value="${clip.end - clip.start}"> <span class="val">${picked}s</span></div>`
+      : `<div class="trim-row">起 <input type="range" class="trimStart" min="0" max="${clip.duration}" step="0.1" value="${clip.start}"> <span class="val">${clip.start.toFixed(1)}s</span></div>
+         <div class="trim-row">止 <input type="range" class="trimEnd" min="0" max="${clip.duration}" step="0.1" value="${clip.end}"> <span class="val">${clip.end.toFixed(1)}s</span></div>`;
     card.innerHTML = `
       <div class="order">${i + 1}</div>
       <button class="del" title="删除">✕</button>

@@ -3,6 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { groupUpdates, createBot } = require('../lib/telegram');
+const { buildHelpText, isHelpTrigger } = require('../telegram-poll');
 
 const updates = [
   { message: { chat: { id: 10 }, message_id: 100, media_group_id: 'g1', caption: '标题\n#a',
@@ -38,6 +39,7 @@ assert.strictEqual(g1.caption, '标题\n#a'); // caption 取相册里有 caption
   };
   const bot = createBot('FAKETOKEN', fakeDeps);
   assert.strictEqual(typeof bot.sendVideoFile, 'function', 'createBot 应暴露 sendVideoFile');
+  assert.strictEqual(typeof bot.getMe, 'function', 'createBot 应暴露 getMe');
 
   const r = await bot.sendVideoFile(12345, tmpFile, '标题描述');
   assert.strictEqual(r.status, 200);
@@ -51,5 +53,21 @@ assert.strictEqual(g1.caption, '标题\n#a'); // caption 取相册里有 caption
   assert.ok(Buffer.isBuffer(mpCall.fileField.buffer) && mpCall.fileField.buffer.equals(fileBytes), '应读取到临时文件的原始字节');
 
   fs.unlinkSync(tmpFile);
+
+  // buildHelpText：当前模式行按 mode 填充
+  const manualText = buildHelpText('manual');
+  assert.ok(manualText.includes('当前模式：人工剪辑'), 'manual 模式应显示"人工剪辑": ' + manualText);
+  assert.ok(manualText.includes('使用说明'), '应含"使用说明"标题: ' + manualText);
+  const autoText = buildHelpText('auto');
+  assert.ok(autoText.includes('当前模式：自动剪辑'), 'auto 模式应显示"自动剪辑": ' + autoText);
+
+  // isHelpTrigger：/help /start、@提及（大小写不敏感）、bot_command 实体、无 text
+  assert.strictEqual(isHelpTrigger({ text: '/help' }), true, '/help 应触发');
+  assert.strictEqual(isHelpTrigger({ text: '/start@bot' }), true, '/start@bot 应触发');
+  assert.strictEqual(isHelpTrigger({ text: 'hi @MyBot please' }, 'MyBot'), true, '@提及机器人应触发(大小写不敏感)');
+  assert.strictEqual(isHelpTrigger({ text: 'random' }), false, '普通文本不应触发');
+  assert.strictEqual(isHelpTrigger({ text: 'x', entities: [{ type: 'bot_command' }] }), true, 'bot_command 实体应触发');
+  assert.strictEqual(isHelpTrigger({}), false, '无 text 不应触发');
+
   console.log('TG_OK');
 })().catch((e) => { console.error('FAIL', e); process.exit(1); });

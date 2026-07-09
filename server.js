@@ -49,11 +49,6 @@ const app = http.createServer(async (req, res) => {
       return res.end(html);
     }
 
-    // 当前剪辑模式（供页面顶部显示：人工剪辑 / 自动剪辑）。
-    if (req.method === 'GET' && p === '/api/mode') {
-      return sendJson(res, 200, { mode: (process.env.EDIT_MODE || 'manual') });
-    }
-
     if (req.method === 'GET' && p === '/jobs') {
       const token = u.searchParams.get('token');
       if (!verifyAdminToken(token)) {

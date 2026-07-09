@@ -20,6 +20,47 @@ function createDefaultBot() {
   return createBot(token, { httpGet, httpPostJson, httpPostMultipart });
 }
 
+// 使用说明文案：@提及机器人 / 发 /help /start 时回复；当前模式行会按 mode 填充。
+function buildHelpText(mode) {
+  const modeLabel = mode === 'auto' ? '自动剪辑' : '人工剪辑';
+  return `🎬 智能剪辑 Bot 使用说明
+
+📌 当前模式：${modeLabel}
+
+发一个「相册」给我（视频 + 图片一次选中一起发），我会帮你剪成一条视频发回群。
+
+📤 怎么发：
+1. 点附件 📎
+2. 一次同时选中视频 + 图片（可多个）
+3. 说明框里写：第一行=标题，下面=描述，带 # 的词=标签
+4. 一次性发出去
+
+例：
+绝世高手回归都市
+男主隐藏身份三年强势归来
+#热血 #逆袭 #短剧
+
+⚙️ 模式说明：
+· 人工剪辑：我回一个剪辑链接，你点进去自己选怎么剪，提交后成片发回群
+· 自动剪辑：我直接智能选段剪好发回群
+
+⚠️ 注意：
+· 视频和图片一定要【一次选中一起发】（相册），分开发我会当成好几条、没法合成一条
+· 标题别单独发一条文字，写在相册说明框里
+
+成片会带「下载」和「重新剪辑」链接。`;
+}
+
+// 判断一条 message 是否应触发使用说明回复：/help /start 开头、@提及机器人、或带 bot_command 实体。
+function isHelpTrigger(message, botUsername) {
+  if (!message || !message.text) return false;
+  const text = message.text.trim().toLowerCase();
+  if (text.startsWith('/help') || text.startsWith('/start')) return true;
+  if (botUsername && text.includes('@' + String(botUsername).toLowerCase())) return true;
+  if (Array.isArray(message.entities) && message.entities.some((e) => e && e.type === 'bot_command')) return true;
+  return false;
+}
+
 // 单个相册批次 → 建任务。
 // MUST-FIX #1：先 db.create(status:'downloading') 拿到 job.id，再把素材下载到 WORK_DIR/<job.id>/，
 // 使其与 server 的 /media/<id>/<basename> 以及 worker 的 out.mp4 路径口径一致。
@@ -112,7 +153,7 @@ async function buildDefaultSpec(media) {
 //   - 调用方没传 pending（一次性/测试场景，例如 test/poll.test.js、test/auto.test.js 单次调用
 //     pollOnce 且相册已在同一次 getUpdates 里到齐）→ 用一个临时 Map 且 debounce=0，本次就绪即建任务，
 //     保持"单次调用即可拿到任务"的既有行为不被防抖打破。
-async function pollOnce({ db, workDir, bot, mode, publicBase, offset, pending }) {
+async function pollOnce({ db, workDir, bot, mode, publicBase, offset, pending, botUsername = '' }) {
   const hasExternalPending = !!pending;
   const buffer = pending || new Map();
   const debounceMs = hasExternalPending ? ALBUM_DEBOUNCE_MS : 0;
@@ -120,6 +161,18 @@ async function pollOnce({ db, workDir, bot, mode, publicBase, offset, pending })
   const updates = await bot.getUpdates(offset);
   let newOffset = offset;
   for (const u of updates) newOffset = Math.max(newOffset, u.update_id + 1);
+
+  // @提及 / /help / /start 触发使用说明回复：与相册/建任务逻辑完全独立，纯文本消息不会建任务。
+  for (const u of updates) {
+    const m = u.message;
+    if (isHelpTrigger(m, botUsername)) {
+      try {
+        await bot.sendMessage(m.chat.id, buildHelpText(mode));
+      } catch (e) {
+        console.error('[poll] 使用说明回复失败', e.message || e);
+      }
+    }
+  }
 
   // 即使本次 updates 为空也要跑 merge+takeReady：这样一个已缓冲的相册能在后续的空轮询里，
   // 单纯因为时间流逝、静默满足防抖而落地建任务。
@@ -153,9 +206,21 @@ function startPolling(opts = {}) {
   // 常驻跨轮询相册缓冲区：整个轮询循环生命周期内只有这一个 Map，相册素材才能跨多次 getUpdates 累积。
   const pending = new Map();
 
+  // 机器人自己的 username，供 @提及触发使用说明识别；异步获取一次并缓存，不阻塞轮询启动
+  // （getMe 卡住/失败也不影响 /help /start /bot_command 实体这几种触发方式）。
+  let botUsername = '';
+  (async () => {
+    try {
+      const me = await bot.getMe();
+      botUsername = me.username || '';
+    } catch (e) {
+      console.error('[poll] getMe 失败', e.message || e);
+    }
+  })();
+
   const runOnce = async () => {
     try {
-      const r = await pollOnce({ db, workDir, bot, mode, publicBase, offset, pending });
+      const r = await pollOnce({ db, workDir, bot, mode, publicBase, offset, pending, botUsername });
       offset = r.offset;
       return r;
     } catch (e) {
@@ -178,4 +243,4 @@ function startPolling(opts = {}) {
   return { stop() { stopped = true; } };
 }
 
-module.exports = { startPolling, pollOnce, ingestBatch, buildDefaultSpec };
+module.exports = { startPolling, pollOnce, ingestBatch, buildDefaultSpec, buildHelpText, isHelpTrigger };

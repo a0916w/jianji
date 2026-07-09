@@ -37,12 +37,6 @@
     background: linear-gradient(90deg, var(--accent), var(--accent-2));
     -webkit-background-clip: text; background-clip: text; color: transparent;
   }
-  .mode-badge {
-    font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 20px;
-    vertical-align: middle; margin-left: 4px;
-    color: var(--c, var(--accent)); border: 1px solid var(--c, var(--accent));
-    background: color-mix(in srgb, var(--c, var(--accent)) 14%, transparent);
-  }
   .settings { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
   .settings label { font-size: 13px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
   select {
@@ -153,7 +147,7 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>⚡ <span>快速智能剪辑</span> <span id="modeBadge" class="mode-badge" hidden></span></h1>
+    <h1>⚡ <span>快速智能剪辑</span></h1>
     <div class="settings">
       <label>画幅
         <select id="aspectSel">
@@ -874,21 +868,6 @@ $("serverBtn").addEventListener("click", async () => {
 });
 
 refreshButtons();
-
-/* ---------------- 顶部显示当前剪辑模式（人工 / 自动） ---------------- */
-(async function showMode() {
-  try {
-    const r = await fetch("/api/mode");
-    if (!r.ok) return;
-    const { mode } = await r.json();
-    const el = $("modeBadge");
-    if (!el) return;
-    const isAuto = mode === "auto";
-    el.textContent = isAuto ? "自动剪辑模式" : "人工剪辑模式";
-    el.style.setProperty("--c", isAuto ? "var(--accent-2)" : "var(--green)");
-    el.hidden = false;
-  } catch (e) { /* 拿不到模式就不显示 */ }
-})();
 
 /* ---------------- Telegram 任务对接 ---------------- */
 (async function initFromJob() {

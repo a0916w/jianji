@@ -43,6 +43,12 @@
     background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 8px; padding: 6px 10px; font-size: 13px; outline: none; cursor: pointer;
   }
+  .admin-link {
+    color: var(--text-dim); font-size: 13px; text-decoration: none;
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 10px; transition: color .15s, border-color .15s;
+  }
+  .admin-link:hover { color: var(--text); border-color: var(--accent); }
 
   /* 上传区 */
   #dropzone {
@@ -95,8 +101,44 @@
   .trim-row input[type=range] { flex: 1 1 0; min-width: 0; accent-color: var(--accent); height: 4px; }
   .trim-row .val { flex: 0 0 auto; white-space: nowrap; min-width: 34px; text-align: right; }
 
+  /* 裁剪轨道编辑器 */
+  #trimEditor {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 12px 14px; margin: 4px 0 16px;
+  }
+  .te-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 13px; }
+  .te-head .te-title { font-weight: 700; color: var(--accent); white-space: nowrap; }
+  #teName { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 30%; }
+  #teTimes { color: var(--green); font-variant-numeric: tabular-nums; margin-left: auto; white-space: nowrap; }
+  #teClose {
+    width: 24px; height: 24px; border: none; border-radius: 6px; cursor: pointer;
+    background: var(--panel-2); color: var(--text-dim); font-size: 12px; line-height: 1;
+  }
+  #teClose:hover { background: var(--red); color: #fff; }
+  #teTrack { position: relative; height: 76px; border-radius: 8px; overflow: hidden; cursor: ew-resize; touch-action: none; }
+  #teCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .te-shade { position: absolute; top: 0; height: 56px; background: rgba(10, 12, 17, .72); pointer-events: none; }
+  #teShadeL { left: 0; }
+  .te-handle {
+    position: absolute; top: 0; height: 56px; width: 10px; margin-left: -5px;
+    background: var(--accent); border-radius: 3px; pointer-events: none;
+  }
+  .te-handle::after {
+    content: ""; position: absolute; left: 3px; right: 3px; top: 18px; bottom: 18px;
+    border-radius: 2px; background: rgba(255,255,255,.75);
+  }
+  .te-hint { font-size: 11px; color: var(--text-dim); margin-top: 8px; }
+  .clip-card.selected { border-color: var(--accent); background: #1a2233; }
+  .trim-hint { cursor: pointer; }
+
   /* 操作按钮 */
   .actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0 22px; }
+  .actions #titleInput {
+    flex: 1 1 240px; max-width: 360px; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+    font-size: 13px; outline: none;
+  }
+  .actions #titleInput:focus { border-color: var(--accent); }
   button.btn {
     border: none; border-radius: 10px; padding: 10px 18px; font-size: 14px;
     font-weight: 600; cursor: pointer; color: #fff; transition: filter .15s, opacity .15s;
@@ -158,20 +200,14 @@
           <option value="720x720">方形 1:1</option>
         </select>
       </label>
-      <label>每段智能选取
-        <select id="segLenSel">
-          <option value="3">3 秒</option>
-          <option value="5" selected>5 秒</option>
-          <option value="8">8 秒</option>
-          <option value="12">12 秒</option>
-        </select>
-      </label>
       <label>转场
         <select id="fadeSel">
           <option value="0.35" selected>淡入淡出</option>
           <option value="0">无（硬切）</option>
         </select>
       </label>
+      <a class="admin-link" href="/jobs"
+         onclick="event.preventDefault();var t=prompt('请输入管理 Token',localStorage.getItem('admin_token')||'');if(t){localStorage.setItem('admin_token',t);location.href='/jobs?token='+encodeURIComponent(t);}">📋 任务管理</a>
     </div>
   </header>
 
@@ -184,9 +220,25 @@
   <div id="clips"></div>
   <div class="empty-tip" id="emptyTip">尚未添加视频片段。添加后每个片段会自动抽帧生成缩略图，可拖拽卡片调整顺序。</div>
 
+  <div id="trimEditor" class="hidden">
+    <div class="te-head">
+      <span class="te-title">✂ 精细裁剪</span>
+      <span id="teName"></span>
+      <span id="teTimes"></span>
+      <button id="teClose" title="关闭">✕</button>
+    </div>
+    <div id="teTrack">
+      <canvas id="teCanvas"></canvas>
+      <div class="te-shade" id="teShadeL"></div>
+      <div class="te-shade" id="teShadeR"></div>
+      <div class="te-handle" id="teHandleL"></div>
+      <div class="te-handle" id="teHandleR"></div>
+    </div>
+    <div class="te-hint">拖动两侧手柄调整起止，拖动选区中间整体平移；轨道上是缩略图 + 音频波形，底部为时间刻度</div>
+  </div>
+
   <div class="actions">
-    <button class="btn btn-smart" id="smartBtn" disabled>✨ 智能选段（可选：自动挑精彩部分）</button>
-    <button class="btn btn-plain" id="resetBtn" disabled>↺ 重置为完整拼接</button>
+    <input type="text" id="titleInput" maxlength="80" placeholder="成片标题（选填，后台生成时保存到任务）">
     <button class="btn btn-export" id="exportBtn" disabled>🖥 浏览器生成</button>
     <button class="btn btn-export" id="serverBtn" disabled>☁ 后台生成</button>
     <span id="status"></span>
@@ -210,6 +262,7 @@
 /* ---------------- 状态 ---------------- */
 let clips = [];          // {id, file, url, name, duration, video, thumbs[], start, end, smart}
 let nextId = 1;
+let selectedClipId = null;   // 裁剪轨道编辑器当前选中的片段
 let exporting = false;
 let audioCtx = null, masterGain = null, streamDest = null;
 
@@ -262,8 +315,6 @@ function updateProgress(t) {
 
 function refreshButtons() {
   const has = clips.length > 0;
-  $("smartBtn").disabled = !has || exporting;
-  $("resetBtn").disabled = !has || exporting;
   $("exportBtn").disabled = !has || exporting;
   $("serverBtn").disabled = !has || exporting;
   $("playBtn").disabled = !has || exporting;
@@ -409,8 +460,8 @@ function renderClips() {
       : `总长 ${clip.duration.toFixed(1)}s · <span class="picked">已选 ${picked}s${clip.smart ? " ✨" : ""}</span>`;
     const controls = isImg
       ? `<div class="trim-row">时长 <input type="range" class="imgDur" min="0.5" max="10" step="0.5" value="${clip.end - clip.start}"> <span class="val">${picked}s</span></div>`
-      : `<div class="trim-row">起 <input type="range" class="trimStart" min="0" max="${clip.duration}" step="0.1" value="${clip.start}"> <span class="val">${clip.start.toFixed(1)}s</span></div>
-         <div class="trim-row">止 <input type="range" class="trimEnd" min="0" max="${clip.duration}" step="0.1" value="${clip.end}"> <span class="val">${clip.end.toFixed(1)}s</span></div>`;
+      : `<div class="clip-meta trim-hint">✂ 点击卡片精细裁剪</div>`;
+    if (clip.id === selectedClipId) card.classList.add("selected");
     card.innerHTML = `
       <div class="order">${i + 1}</div>
       <button class="del" title="删除">✕</button>
@@ -422,9 +473,11 @@ function renderClips() {
       </div>
     `;
 
-    card.querySelector(".del").addEventListener("click", () => {
+    card.querySelector(".del").addEventListener("click", e => {
+      e.stopPropagation();
       URL.revokeObjectURL(clip.url);
       clips = clips.filter(c => c.id !== clip.id);
+      if (selectedClipId === clip.id) closeTrimEditor();
       renderClips(); timelineChanged();
     });
     if (isImg) {
@@ -434,14 +487,7 @@ function renderClips() {
         renderClips(); timelineChanged();
       });
     } else {
-      card.querySelector(".trimStart").addEventListener("input", e => {
-        clip.start = Math.min(parseFloat(e.target.value), clip.end - 0.2);
-        clip.smart = false; renderClips(); timelineChanged();
-      });
-      card.querySelector(".trimEnd").addEventListener("input", e => {
-        clip.end = Math.max(parseFloat(e.target.value), clip.start + 0.2);
-        clip.smart = false; renderClips(); timelineChanged();
-      });
+      card.addEventListener("click", () => openTrimEditor(clip));
     }
 
     card.addEventListener("dragstart", e => {
@@ -465,62 +511,188 @@ function renderClips() {
   });
 }
 
-/* ---------------- 智能选段：运动量分析（可选） ---------------- */
-async function smartEdit() {
-  hardStop();
-  const segLen = parseFloat($("segLenSel").value);
-  const w = 48, h = 27;
-  const c = document.createElement("canvas");
-  c.width = w; c.height = h;
-  const g = c.getContext("2d", { willReadFrequently: true });
+/* ---------------- 裁剪轨道编辑器：刻度尺 + 缩略图 + 波形 + 拖拽手柄 ---------------- */
+const teTrack = $("teTrack"), teCanvas = $("teCanvas");
 
-  for (let ci = 0; ci < clips.length; ci++) {
-    const clip = clips[ci];
-    if (clip.type === "image") continue;   // 图片不参与选段
-    setStatus(`✨ 智能分析中 ${ci + 1}/${clips.length}：${clip.name}`);
-    if (clip.duration <= segLen + 0.3) {
-      clip.start = 0; clip.end = clip.duration; clip.smart = true;
-      continue;
-    }
-    // 均匀采样帧，计算相邻帧像素差作为“运动量”
-    const n = Math.min(30, Math.max(10, Math.floor(clip.duration * 2)));
-    const times = [], scores = [];
-    let prev = null;
-    for (let i = 0; i < n; i++) {
-      const t = clip.duration * i / (n - 1);
-      await seekTo(clip.video, t);
-      g.drawImage(clip.video, 0, 0, w, h);
-      const data = g.getImageData(0, 0, w, h).data;
-      if (prev) {
-        let diff = 0;
-        for (let p = 0; p < data.length; p += 8) diff += Math.abs(data[p] - prev[p]);
-        scores.push(diff);
-        times.push(t);
-      }
-      prev = data.slice();
-    }
-    // 滑动窗口找运动量总和最大的 segLen 区间
-    let bestStart = 0, bestScore = -1;
-    for (let i = 0; i < times.length; i++) {
-      const winStart = times[i];
-      if (winStart + segLen > clip.duration) break;
-      let sum = 0;
-      for (let j = i; j < times.length && times[j] <= winStart + segLen; j++) sum += scores[j];
-      if (sum > bestScore) { bestScore = sum; bestStart = winStart; }
-    }
-    clip.start = bestStart;
-    clip.end = Math.min(clip.duration, bestStart + segLen);
-    clip.smart = true;
-  }
-  renderClips();
-  timelineChanged();
-  setStatus(`✨ 智能选段完成，成片约 ${totalDur.toFixed(1)} 秒`);
+function teClip() { return clips.find(c => c.id === selectedClipId) || null; }
+
+function closeTrimEditor() {
+  selectedClipId = null;
+  $("trimEditor").classList.add("hidden");
 }
-$("smartBtn").addEventListener("click", smartEdit);
-$("resetBtn").addEventListener("click", () => {
-  clips.forEach(c => { if (c.type === "image") return; c.start = 0; c.end = c.duration; c.smart = false; });
-  renderClips(); timelineChanged(); setStatus("已重置为完整拼接");
+$("teClose").addEventListener("click", () => { closeTrimEditor(); renderClips(); });
+
+async function openTrimEditor(clip) {
+  hardStop();   // 抽帧要占用该片段的 video 元素，先停播放
+  selectedClipId = clip.id;
+  renderClips();
+  $("trimEditor").classList.remove("hidden");
+  $("teName").textContent = clip.name;
+  updateTeUI(clip);
+  drawTrack(clip);   // 先画已有内容（刻度尺），缩略图/波形就绪后重画
+  if (!clip.trackThumbs) {
+    const urls = await extractThumbs(clip.video, 10);
+    clip.trackThumbs = await Promise.all(urls.map(u => new Promise(r => {
+      const im = new Image(); im.onload = () => r(im); im.onerror = () => r(null); im.src = u;
+    })));
+    if (selectedClipId === clip.id) drawTrack(clip);
+  }
+  if (clip.waveform === undefined) {
+    try {
+      const ab = await clip.file.arrayBuffer();
+      clip.waveform = computePeaks(await decodeAudio(ab), 600);
+    } catch (e) { clip.waveform = null; }   // 无音轨或解码失败：不画波形
+    if (selectedClipId === clip.id) drawTrack(clip);
+  }
+}
+
+function decodeAudio(ab) {
+  return new Promise((res, rej) => {
+    const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    new Ctx(1, 44100, 44100).decodeAudioData(ab, res, rej);
+  });
+}
+
+function computePeaks(buf, buckets) {
+  const ch = buf.getChannelData(0);
+  const per = ch.length / buckets;
+  const peaks = new Float32Array(buckets);
+  for (let b = 0; b < buckets; b++) {
+    const s = Math.floor(b * per), e = Math.max(s + 1, Math.floor((b + 1) * per));
+    const stride = Math.max(1, Math.floor((e - s) / 64));
+    let max = 0;
+    for (let i = s; i < e; i += stride) { const v = Math.abs(ch[i]); if (v > max) max = v; }
+    peaks[b] = max;
+  }
+  let m = 0;
+  for (const v of peaks) m = Math.max(m, v);
+  if (m > 0) for (let i = 0; i < peaks.length; i++) peaks[i] /= m;
+  return peaks;
+}
+
+/* 选一个让刻度数量落在 4~12 根的步长 */
+function tickStep(duration) {
+  for (const s of [0.5, 1, 2, 5, 10, 15, 30, 60, 120]) {
+    if (duration / s <= 12) return s;
+  }
+  return 300;
+}
+
+function drawTrack(clip) {
+  const rect = teTrack.getBoundingClientRect();
+  if (!rect.width) return;
+  const dpr = window.devicePixelRatio || 1;
+  teCanvas.width = Math.round(rect.width * dpr);
+  teCanvas.height = Math.round(76 * dpr);
+  const g = teCanvas.getContext("2d");
+  g.scale(dpr, dpr);
+  const W = rect.width, TH = 56, RH = 20;
+
+  // 缩略图带
+  g.fillStyle = "#000";
+  g.fillRect(0, 0, W, TH);
+  if (clip.trackThumbs) {
+    const n = clip.trackThumbs.length, tw = W / n;
+    clip.trackThumbs.forEach((im, i) => {
+      if (!im) return;
+      const s = Math.max(tw / im.width, TH / im.height);
+      const dw = im.width * s, dh = im.height * s;
+      g.save();
+      g.beginPath(); g.rect(i * tw, 0, tw, TH); g.clip();
+      g.drawImage(im, i * tw + (tw - dw) / 2, (TH - dh) / 2, dw, dh);
+      g.restore();
+    });
+  }
+
+  // 波形（叠在缩略图上，垂直居中对称）
+  if (clip.waveform) {
+    const n = clip.waveform.length, bw = W / n, mid = TH / 2, amp = TH * 0.42;
+    g.fillStyle = "rgba(46, 204, 143, .7)";
+    for (let i = 0; i < n; i++) {
+      const h = Math.max(1, clip.waveform[i] * amp);
+      g.fillRect(i * bw, mid - h, Math.max(1, bw - 0.5), h * 2);
+    }
+  }
+
+  // 时间刻度尺
+  g.fillStyle = "#12151b";
+  g.fillRect(0, TH, W, RH);
+  const step = tickStep(clip.duration);
+  g.strokeStyle = "#3a4560";
+  g.fillStyle = "#8b94a7";
+  g.font = "10px sans-serif";
+  g.textAlign = "left";
+  g.beginPath();
+  for (let t = 0; t <= clip.duration + 0.001; t += step / 2) {
+    const x = Math.round(t / clip.duration * W) + 0.5;
+    const major = Math.abs(t / step - Math.round(t / step)) < 0.001;
+    g.moveTo(x, TH);
+    g.lineTo(x, TH + (major ? 7 : 4));
+    if (major && t > 0 && x < W - 24) {
+      g.fillText(t >= 60 ? fmt(t) : (step < 1 ? t.toFixed(1) : t.toFixed(0)) + "s", x + 3, TH + 16);
+    }
+  }
+  g.stroke();
+}
+
+function updateTeUI(clip) {
+  const p1 = clip.start / clip.duration * 100, p2 = clip.end / clip.duration * 100;
+  $("teShadeL").style.width = p1 + "%";
+  $("teShadeR").style.left = p2 + "%";
+  $("teShadeR").style.width = (100 - p2) + "%";
+  $("teHandleL").style.left = p1 + "%";
+  $("teHandleR").style.left = p2 + "%";
+  $("teTimes").textContent =
+    `${clip.start.toFixed(1)}s – ${clip.end.toFixed(1)}s · 已选 ${(clip.end - clip.start).toFixed(1)}s / 共 ${clip.duration.toFixed(1)}s`;
+}
+
+let teMode = null, teAnchor = 0, teSelLen = 0;
+
+function teApplyDrag(clip, t) {
+  if (teMode === "left") clip.start = Math.max(0, Math.min(t, clip.end - 0.2));
+  else if (teMode === "right") clip.end = Math.min(clip.duration, Math.max(t, clip.start + 0.2));
+  else if (teMode === "move") {
+    const s = Math.max(0, Math.min(t - teAnchor, clip.duration - teSelLen));
+    clip.start = s; clip.end = s + teSelLen;
+  }
+  clip.smart = false;
+  updateTeUI(clip);
+}
+
+teTrack.addEventListener("pointerdown", ev => {
+  const clip = teClip();
+  if (!clip) return;
+  const rect = teTrack.getBoundingClientRect();
+  const x = ev.clientX - rect.left;
+  const t = x / rect.width * clip.duration;
+  const px = s => s / clip.duration * rect.width;
+  if (Math.abs(x - px(clip.start)) < 12) teMode = "left";
+  else if (Math.abs(x - px(clip.end)) < 12) teMode = "right";
+  else if (t > clip.start && t < clip.end) {
+    teMode = "move"; teAnchor = t - clip.start; teSelLen = clip.end - clip.start;
+  } else {
+    // 点在选区外：把较近的手柄挪过来
+    teMode = Math.abs(x - px(clip.start)) < Math.abs(x - px(clip.end)) ? "left" : "right";
+  }
+  teTrack.setPointerCapture(ev.pointerId);
+  teApplyDrag(clip, t);
 });
+teTrack.addEventListener("pointermove", ev => {
+  if (!teMode) return;
+  const clip = teClip();
+  if (!clip) { teMode = null; return; }
+  const rect = teTrack.getBoundingClientRect();
+  teApplyDrag(clip, (ev.clientX - rect.left) / rect.width * clip.duration);
+});
+teTrack.addEventListener("pointerup", ev => {
+  if (!teMode) return;
+  teMode = null;
+  teTrack.releasePointerCapture(ev.pointerId);
+  renderClips(); timelineChanged();
+});
+teTrack.addEventListener("pointercancel", () => { teMode = null; });
+
+window.addEventListener("resize", () => { const c = teClip(); if (c) { drawTrack(c); } });
 
 /* ---------------- 画幅（自动跟随首个视频的横/竖屏） ---------------- */
 function applyAspect() {
@@ -826,7 +998,8 @@ $("serverBtn").addEventListener("click", async () => {
   setStatus("正在创建服务器任务…");
   try {
     const jr = await fetch("/api/web-job", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: $("titleInput").value.trim() }),
     });
     const jd = await jr.json();
     if (!jr.ok || !jd.ok) throw new Error(jd.error || "创建任务失败");
@@ -846,7 +1019,7 @@ $("serverBtn").addEventListener("click", async () => {
     setStatus("正在提交渲染任务…");
     const edit_spec = {
       aspect: $("aspectSel").value,
-      segLen: parseFloat($("segLenSel").value),
+      segLen: 5,   // 服务端渲染的兜底段长；前端始终显式传 start/end，此值仅在缺失时生效
       fade: parseFloat($("fadeSel").value),
       // index = 上传顺序下标：服务端 media 数组按 web-upload 调用顺序追加，与 clips 顺序一致。
       clips: clips.map((c, i) => ({ index: i, start: c.start, end: c.end, order: i, type: c.type })),
@@ -881,6 +1054,7 @@ refreshButtons();
     const r = await fetch(`/api/job?job=${encodeURIComponent(job)}&sign=${encodeURIComponent(sign)}`);
     if (!r.ok) throw new Error("任务加载失败");
     const data = await r.json();
+    if (data.title) $("titleInput").value = data.title;   // 回显任务标题
     // 预加载媒体为 File（fetch blob → File），复用现有 addFiles
     const files = [];
     for (const m of data.media) {
@@ -915,7 +1089,7 @@ refreshButtons();
         btn.disabled = true; btn.textContent = "提交中…";
         const edit_spec = {
           aspect: $("aspectSel").value,
-          segLen: parseFloat($("segLenSel").value),
+          segLen: 5,   // 服务端渲染的兜底段长；前端始终显式传 start/end，此值仅在缺失时生效
           fade: parseFloat($("fadeSel").value),
           // index 必须是原始媒体数组下标（C1），order 才是当前时间轴位置；
           // mediaIndex 缺失时(非 job 模式的直接拖拽)回退为 i。

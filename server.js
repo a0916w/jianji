@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { createDb } = require('./lib/db');
 const { sign, verify } = require('./lib/sign');
 const { readJsonBody, sendJson } = require('./lib/util');
+const mingshun = require('./lib/mingshun');
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 const WORK_DIR = process.env.WORK_DIR || (require('os').tmpdir() + '/jianji');
@@ -56,12 +57,14 @@ const app = http.createServer(async (req, res) => {
         return res.end('forbidden');
       }
       const jobs = db.listAll();
+      const sliceCfg = mingshun.sliceInfo(); // { enabled, themes }
       const jobDetails = {};
       for (const j of jobs) {
         jobDetails[j.id] = {
           title: j.title || '', description: j.description || '', tags: j.tags || [],
           status: j.status, mode: j.mode, source: j.source, created_at: j.created_at,
           dl: j.status === 'done' ? `/media/${encodeURIComponent(j.id)}/out.mp4?sign=${sign(j.id)}` : null,
+          slice_status: j.slice_status || '', slice_theme: j.slice_theme || '', slice_video_id: j.slice_video_id || '',
         };
       }
       const jobDetailsJson = JSON.stringify(jobDetails).replace(/</g, '\\u003c');
@@ -81,6 +84,13 @@ const app = http.createServer(async (req, res) => {
         const dl = j.status === 'done'
           ? `<a class="btn btn-dl" href="/media/${encodeURIComponent(j.id)}/out.mp4?sign=${sign(j.id)}" download="out-${encodeURIComponent(j.id)}.mp4">下载</a>`
           : '';
+        // 切片按钮：仅在明顺切片可用且任务已完成时出现；已切过则显示状态而非按钮。
+        let slice = '';
+        if (sliceCfg.enabled && j.status === 'done') {
+          if (j.slice_status === 'done') slice = `<span class="badge" style="--c:var(--green)" title="video_id=${escapeHtml(j.slice_video_id || '')}">已切片</span>`;
+          else if (j.slice_status === 'slicing') slice = `<span class="badge" style="--c:var(--accent)">切片中</span>`;
+          else slice = `<button class="btn btn-slice" data-slice="${escapeHtml(j.id)}">${j.slice_status === 'failed' ? '重试切片' : '切片'}</button>`;
+        }
         const title = j.title ? escapeHtml(j.title) : '<span class="dim">—</span>';
         return `<tr>
           <td class="mono">${escapeHtml(j.id)}</td>
@@ -89,7 +99,7 @@ const app = http.createServer(async (req, res) => {
           <td><span class="src">${escapeHtml(j.source)}</span></td>
           <td class="title">${title}</td>
           <td class="dim mono">${escapeHtml(j.created_at)}</td>
-          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${play}${dl}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
+          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${play}${dl}${slice}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
         </tr>`;
       }).join('\n');
       const count = jobs.length;
@@ -132,6 +142,9 @@ const app = http.createServer(async (req, res) => {
   .btn-del{background:color-mix(in srgb,var(--red) 16%,transparent);color:var(--red);border:1px solid color-mix(in srgb,var(--red) 40%,transparent);cursor:pointer;font-family:inherit}
   .btn-info{background:var(--panel-2);color:var(--text);border:1px solid var(--border);cursor:pointer;font-family:inherit}
   .btn-play{background:color-mix(in srgb,var(--accent) 20%,transparent);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);cursor:pointer;font-family:inherit}
+  .btn-slice{background:color-mix(in srgb,var(--accent-2) 20%,transparent);color:var(--accent-2);border:1px solid color-mix(in srgb,var(--accent-2) 45%,transparent);cursor:pointer;font-family:inherit}
+  .slice-select{width:100%;padding:10px 12px;margin-top:6px;background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit}
+  .btn-primary{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:#fff;cursor:pointer;font-family:inherit;padding:9px 20px}
   .empty{padding:64px 20px;text-align:center;font-size:16px;line-height:1.9}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:20px;z-index:100}
   .modal[hidden]{display:none}
@@ -167,8 +180,21 @@ const app = http.createServer(async (req, res) => {
     <div class="modal-actions"><a class="btn btn-dl" id="modalDl" href="#">下载成品</a></div>
   </div>
 </div>
+<div id="sliceModal" class="modal" hidden>
+  <div class="modal-card" style="max-width:420px">
+    <button type="button" class="modal-close" id="sliceClose" aria-label="关闭">&times;</button>
+    <div class="modal-title">切片到明顺</div>
+    <div class="modal-field">
+      <div class="modal-label">选择主题</div>
+      <select id="sliceTheme" class="slice-select"></select>
+    </div>
+    <div class="modal-field" id="sliceMsg" style="min-height:16px;font-size:13px;color:var(--text-dim)"></div>
+    <div class="modal-actions"><button type="button" class="btn btn-primary" id="sliceGo">开始切片</button></div>
+  </div>
+</div>
 <script>
   const JOB_DETAILS = ${jobDetailsJson};
+  const SLICE = ${JSON.stringify({ enabled: sliceCfg.enabled, themes: sliceCfg.themes })};
   const TOKEN = new URLSearchParams(location.search).get('token');
   document.addEventListener('click', (e) => {
     const btn = e.target.closest('.btn-del');
@@ -236,6 +262,50 @@ const app = http.createServer(async (req, res) => {
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !modal.hidden) closeModal();
+  });
+
+  // ---- 切片弹窗 ----
+  const sliceModal = document.getElementById('sliceModal');
+  const sliceTheme = document.getElementById('sliceTheme');
+  const sliceMsg = document.getElementById('sliceMsg');
+  const sliceGo = document.getElementById('sliceGo');
+  let sliceId = null;
+  (SLICE.themes || []).forEach((t) => {
+    const o = document.createElement('option'); o.value = t; o.textContent = t; sliceTheme.appendChild(o);
+  });
+  function openSlice(id) {
+    sliceId = id; sliceMsg.textContent = ''; sliceMsg.style.color = 'var(--text-dim)';
+    sliceGo.disabled = false; sliceGo.textContent = '开始切片';
+    sliceModal.hidden = false;
+  }
+  function closeSlice() { sliceModal.hidden = true; sliceId = null; }
+  document.addEventListener('click', (e) => {
+    const sb = e.target.closest('.btn-slice');
+    if (sb) { openSlice(sb.dataset.slice); return; }
+    if (e.target.id === 'sliceClose' || e.target === sliceModal) { closeSlice(); return; }
+  });
+  sliceGo.addEventListener('click', async () => {
+    if (!sliceId) return;
+    sliceGo.disabled = true; sliceGo.textContent = '切片中…';
+    sliceMsg.style.color = 'var(--text-dim)'; sliceMsg.textContent = '正在上传成片到明顺并触发切片，请稍候…';
+    try {
+      const r = await fetch('/api/slice?token=' + encodeURIComponent(TOKEN), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: sliceId, theme: sliceTheme.value }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || '切片失败');
+      sliceMsg.style.color = 'var(--green)';
+      sliceMsg.textContent = '✅ 已提交明顺切片' + (d.video_id != null ? '（video_id=' + d.video_id + '）' : '');
+      setTimeout(() => location.reload(), 1200);
+    } catch (err) {
+      sliceMsg.style.color = 'var(--red)';
+      sliceMsg.textContent = '❌ ' + (err.message || err);
+      sliceGo.disabled = false; sliceGo.textContent = '重试';
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !sliceModal.hidden) closeSlice();
   });
 </script>
 </body></html>`;
@@ -400,7 +470,7 @@ const app = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && p === '/api/submit') {
-      const { job: id, sign: sig, edit_spec } = await readJsonBody(req);
+      const { job: id, sign: sig, edit_spec, slice_theme } = await readJsonBody(req);
       if (!verify(id, sig)) return sendJson(res, 403, { error: '签名无效' });
       const job = db.get(id);
       if (!job) return sendJson(res, 404, { error: '任务不存在' });
@@ -409,8 +479,55 @@ const app = http.createServer(async (req, res) => {
       const INFLIGHT_STATUSES = ['downloading', 'processing', 'rendering'];
       if (INFLIGHT_STATUSES.includes(job.status)) return sendJson(res, 409, { error: '任务不可提交（状态=' + job.status + '）' });
       if (!edit_spec || typeof edit_spec !== 'object') return sendJson(res, 400, { error: 'edit_spec 缺失' });
-      db.update(id, { edit_spec, status: 'rendering' });
+      const patch = { edit_spec, status: 'rendering' };
+      // 提交时选了切片主题：渲染完成后 worker 会自动发明顺切片（见 worker.js maybeSlice）。
+      // 校验主题合法且切片可用，否则忽略（不因切片配置问题挡住正常渲染）。
+      const theme = typeof slice_theme === 'string' ? slice_theme.trim() : '';
+      const mc = mingshun.cfg();
+      if (theme && mc.enabled && mingshun.configured(mc) && (!mc.themes.length || mc.themes.includes(theme))) {
+        patch.slice_theme = theme;
+        patch.slice_status = 'pending';
+      }
+      db.update(id, patch);
       return sendJson(res, 200, { ok: true });
+    }
+
+    // 前端拉切片配置：是否可用 + 可选主题列表（不含密钥）。/jobs 与 /edit 页都用它填主题下拉。
+    if (req.method === 'GET' && p === '/api/slice-info') {
+      return sendJson(res, 200, mingshun.sliceInfo());
+    }
+
+    // 立即切片：把已完成任务的成片发明顺切片。鉴权 = 管理 token 或该任务的 sign（覆盖 /jobs 按钮与 /edit 页两种入口）。
+    if (req.method === 'POST' && p === '/api/slice') {
+      const body = await readJsonBody(req);
+      const id = body.id;
+      const token = u.searchParams.get('token') || body.token;
+      const sig = u.searchParams.get('sign') || body.sign;
+      const authed = verifyAdminToken(token) || (typeof id === 'string' && !!id && verify(id, sig));
+      if (!authed) return sendJson(res, 403, { error: '未授权' });
+      if (typeof id !== 'string' || !id) return sendJson(res, 400, { error: 'id 缺失' });
+      const job = db.get(id);
+      if (!job) return sendJson(res, 404, { error: '任务不存在' });
+      if (job.status !== 'done') return sendJson(res, 409, { error: '任务未完成，无法切片（状态=' + job.status + '）' });
+      const mc = mingshun.cfg();
+      if (!mc.enabled || !mingshun.configured(mc)) return sendJson(res, 400, { error: '明顺切片未配置/未启用' });
+      const theme = typeof body.theme === 'string' ? body.theme.trim() : '';
+      if (mc.themes.length && theme && !mc.themes.includes(theme)) return sendJson(res, 400, { error: '非法主题' });
+      const base = path.resolve(WORK_DIR);
+      const dir = path.resolve(WORK_DIR, String(id));
+      if (dir === base || !dir.startsWith(base + path.sep) || path.dirname(dir) !== base) return sendJson(res, 400, { error: '非法路径' });
+      const outPath = path.join(dir, 'out.mp4');
+      if (!fs.existsSync(outPath)) return sendJson(res, 404, { error: '成片文件不存在' });
+      try {
+        db.update(id, { slice_status: 'slicing', slice_theme: theme, slice_error: null });
+        const r = await mingshun.sliceVideo(outPath, { title: job.title || '', description: job.description || '', theme });
+        db.update(id, { slice_status: 'done', slice_video_id: r.video_id != null ? String(r.video_id) : null });
+        return sendJson(res, 200, { ok: true, video_id: r.video_id });
+      } catch (e) {
+        const msg = String((e && e.message) || e).slice(0, 300);
+        try { db.update(id, { slice_status: 'failed', slice_error: msg }); } catch (_) {}
+        return sendJson(res, 500, { error: '切片失败: ' + msg });
+      }
     }
 
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });

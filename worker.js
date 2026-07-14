@@ -5,6 +5,7 @@ const { render } = require('./lib/render');
 const { run } = require('./lib/util');
 const { sign } = require('./lib/sign');
 const { ffprobeHasAudio } = require('./lib/ffprobe');
+const mingshun = require('./lib/mingshun');
 
 let botRef = null; // 由 telegram-poll 注入，供成片回传
 function setBot(bot, resultChat, publicBase) { botRef = { bot, resultChat, publicBase }; }
@@ -52,6 +53,7 @@ function startWorker({ db, workDir }) {
           }
           await render(job, out, { run, defaults: { imageDur: parseInt(process.env.DEFAULT_IMAGE_DUR || '3', 10) } });
           db.update(job.id, { status: 'done', result_path: out });
+          await maybeSlice(db, job.id, out);
           await deliverResult(job, out);
         } catch (e) {
           try { db.update(job.id, { status: 'failed', error: String((e && e.message) || e).slice(0, 300) }); } catch {}
@@ -67,6 +69,25 @@ function startWorker({ db, workDir }) {
 
   tick();
   return { stop() { stopped = true; if (timer) clearTimeout(timer); } };
+}
+
+// 若任务在提交时选了切片主题（slice_theme），渲染完成后把成片发明顺切片。
+// 失败不影响成品本身（状态已 done），只把 slice_status/slice_error 记到 DB。
+async function maybeSlice(db, id, outPath) {
+  let job;
+  try { job = db.get(id); } catch (_) { return; }
+  if (!job || !job.slice_theme) return;
+  if (!mingshun.cfg().enabled) return;
+  try {
+    db.update(id, { slice_status: 'slicing', slice_error: null });
+    const r = await mingshun.sliceVideo(outPath, { title: job.title || '', description: job.description || '', theme: job.slice_theme });
+    db.update(id, { slice_status: 'done', slice_video_id: r.video_id != null ? String(r.video_id) : null });
+    console.log('[worker] 切片成功', id, '主题=', job.slice_theme, 'video_id=', r.video_id);
+  } catch (e) {
+    const msg = String((e && e.message) || e).slice(0, 300);
+    try { db.update(id, { slice_status: 'failed', slice_error: msg }); } catch (_) {}
+    console.error('[worker] 切片失败', id, msg);
+  }
 }
 
 // 成品发回 Telegram：MUST-FIX #2 — /media URL 必须带签名，否则 server 会 403。

@@ -990,9 +990,47 @@ $("exportBtn").addEventListener("click", async () => {
   startPlay(0);
 });
 
+/* ---------------- 切片询问：生成前问要不要切片到明顺、选哪个主题 ---------------- */
+let _sliceInfo = null; // { enabled, themes }，懒加载缓存
+async function loadSliceInfo() {
+  if (_sliceInfo) return _sliceInfo;
+  try { _sliceInfo = await (await fetch("/api/slice-info")).json(); }
+  catch { _sliceInfo = { enabled: false, themes: [] }; }
+  return _sliceInfo;
+}
+// 返回 { action:'slice', theme } | { action:'no' } | { action:'cancel' }。
+// 切片不可用时直接 {action:'no'}（不弹窗）。
+async function askSlice() {
+  const info = await loadSliceInfo();
+  if (!info.enabled || !(info.themes || []).length) return { action: "no" };
+  return new Promise((resolve) => {
+    const ov = document.createElement("div");
+    ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px";
+    const card = document.createElement("div");
+    card.style.cssText = "background:#181c23;border:1px solid #2a3140;border-radius:12px;max-width:400px;width:100%;padding:22px 24px;color:#e8ecf3;font-family:inherit";
+    card.innerHTML = '<div style="font-size:17px;font-weight:700;margin-bottom:14px">生成后要切片到明顺吗?</div>'
+      + '<div style="font-size:12px;color:#8b94a7;margin-bottom:6px">主题</div>'
+      + '<select id="_askTheme" style="width:100%;padding:10px 12px;background:#1f2530;color:#e8ecf3;border:1px solid #2a3140;border-radius:8px;font-size:14px;font-family:inherit"></select>'
+      + '<div style="display:flex;gap:10px;margin-top:18px">'
+      + '<button id="_askSlice" style="flex:1;padding:10px;border:none;border-radius:8px;background:linear-gradient(90deg,#4f7cff,#7c5cff);color:#fff;font-weight:600;cursor:pointer;font-family:inherit">切片并生成</button>'
+      + '<button id="_askNo" style="flex:1;padding:10px;border:1px solid #2a3140;border-radius:8px;background:transparent;color:#8b94a7;font-weight:600;cursor:pointer;font-family:inherit">只生成不切片</button>'
+      + '</div>';
+    ov.appendChild(card); document.body.appendChild(ov);
+    const sel = card.querySelector("#_askTheme");
+    info.themes.forEach((t) => { const o = document.createElement("option"); o.value = t; o.textContent = t; sel.appendChild(o); });
+    const done = (r) => { ov.remove(); resolve(r); };
+    card.querySelector("#_askSlice").onclick = () => done({ action: "slice", theme: sel.value });
+    card.querySelector("#_askNo").onclick = () => done({ action: "no" });
+    ov.onclick = (e) => { if (e.target === ov) done({ action: "cancel" }); };
+  });
+}
+
 /* ---------------- 生成到服务器：上传原始素材，由后端 ffmpeg 渲染 ---------------- */
 $("serverBtn").addEventListener("click", async () => {
   if (exporting || !clips.length) return;
+  const choice = await askSlice();
+  if (choice.action === "cancel") return; // 关掉弹窗 = 取消整个生成
+  const sliceTheme = choice.action === "slice" ? choice.theme : "";
   const btn = $("serverBtn");
   btn.disabled = true;
   setStatus("正在创建服务器任务…");
@@ -1026,13 +1064,15 @@ $("serverBtn").addEventListener("click", async () => {
     };
     const sr = await fetch("/api/submit", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ job: id, sign, edit_spec }),
+      body: JSON.stringify({ job: id, sign, edit_spec, slice_theme: sliceTheme || undefined }),
     });
     const sd = await sr.json();
     if (!sr.ok || !sd.ok) throw new Error(sd.error || "提交失败");
 
     setStatus("");
-    alert("已提交，服务器渲染中，可在任务列表查看/下载");
+    alert(sliceTheme
+      ? ("已提交，服务器渲染中；渲染完成后会自动切片到明顺（主题：" + sliceTheme + "）。可在任务列表查看")
+      : "已提交，服务器渲染中，可在任务列表查看/下载");
   } catch (e) {
     alert(e.message || String(e));
     setStatus("⚠ 后台生成失败");

@@ -48,8 +48,10 @@ MINGSHUN_FTP_PORT=21
 MINGSHUN_FTP_USER=
 MINGSHUN_FTP_PASS=
 MINGSHUN_TIMEOUT=120
-# 可选主题列表（逗号分隔），切片时由用户从中选一个
+# 可选主题列表（逗号分隔），切片时由用户从中选一个。用干净名（如 abc,def）
 MINGSHUN_THEMES=
+# 发给明顺时给主题加的前缀（明顺 category 约定，如 media-）。填了则 abc 发送为 media-abc；不填原样发
+MINGSHUN_THEME_PREFIX=
 EOF
   chmod 600 "$ENV_FILE"; echo ">>> 生成 $ENV_FILE（SIGN_SECRET / ADMIN_TOKEN 已自动生成随机值），填好 TELEGRAM_BOT_TOKEN 后重跑"; exit 0
 fi

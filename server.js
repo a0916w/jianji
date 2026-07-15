@@ -65,14 +65,16 @@ const app = http.createServer(async (req, res) => {
           title: j.title || '', description: j.description || '', tags: j.tags || [],
           status: j.status, mode: j.mode, source: j.source, created_at: j.created_at,
           dl: j.status === 'done' ? `/media/${encodeURIComponent(j.id)}/out.mp4?sign=${sign(j.id)}` : null,
-          slice_status: j.slice_status || '', slice_theme: j.slice_theme || '', slice_video_id: j.slice_video_id || '',
+          slice_status: j.slice_status || '', slice_theme: j.slice_theme || '', slice_video_id: j.slice_video_id || '', slice_error: j.slice_error || '',
         };
       }
       const jobDetailsJson = JSON.stringify(jobDetails).replace(/</g, '\\u003c');
       // 成片时长展示（秒）。老任务未存 duration 时后台异步补探测（每次翻页最多补几条，
       // 避免一次性 spawn 太多 ffprobe），下次刷新即显示。
       const fmtDur = (d) => (typeof d === 'number' && d > 0)
-        ? `${Math.round(d)}s`
+        ? (d >= 60
+            ? `${Math.floor(d / 60)}分${String(Math.round(d % 60)).padStart(2, '0')}秒`
+            : `${Math.round(d)}秒`)
         : '<span class="dim">—</span>';
       let backfilled = 0;
       for (const j of jobs) {
@@ -104,7 +106,8 @@ const app = http.createServer(async (req, res) => {
         if (sliceCfg.enabled && j.status === 'done') {
           if (j.slice_status === 'done') slice = `<span class="badge" style="--c:var(--green)" title="video_id=${escapeHtml(j.slice_video_id || '')}">已切片</span>`;
           else if (j.slice_status === 'slicing') slice = `<span class="badge" style="--c:var(--accent)">切片中</span>`;
-          else slice = `<button class="btn btn-slice" data-slice="${escapeHtml(j.id)}">${j.slice_status === 'failed' ? '重试切片' : '切片'}</button>`;
+          else if (j.slice_status === 'failed') slice = `<span class="badge" style="--c:var(--red);cursor:help" title="${escapeHtml(j.slice_error || '未知错误')}">切片失败</span><button class="btn btn-slice" data-slice="${escapeHtml(j.id)}" title="${escapeHtml(j.slice_error || '')}">重试</button>`;
+          else slice = `<button class="btn btn-slice" data-slice="${escapeHtml(j.id)}">切片</button>`;
         }
         const title = j.title ? escapeHtml(j.title) : '<span class="dim">—</span>';
         return `<tr>
@@ -201,6 +204,7 @@ const app = http.createServer(async (req, res) => {
     <div class="modal-field"><div class="modal-label">创建时间</div><div class="modal-value" id="modalCreated"></div></div>
     <div class="modal-field"><div class="modal-label">描述</div><div class="modal-value" id="modalDesc"></div></div>
     <div class="modal-field"><div class="modal-label">标签</div><div class="modal-tags" id="modalTags"></div></div>
+    <div class="modal-field" id="modalSliceField" hidden><div class="modal-label">切片错误（失败原因）</div><div class="modal-value" id="modalSliceErr" style="color:var(--red)"></div></div>
     <div class="modal-actions"><a class="btn btn-dl" id="modalDl" href="#">下载成品</a></div>
   </div>
 </div>
@@ -256,6 +260,14 @@ const app = http.createServer(async (req, res) => {
     modalTitleMsg.style.color = 'var(--text-dim)';
     modalTitleSave.disabled = false;
     modalMeta.textContent = (d.status || '—') + ' / ' + (d.mode || '—') + ' / ' + (d.source || '—');
+    // 切片失败时显示错误原因，让操作员看清为什么，别盲目重试。
+    const sliceField = document.getElementById('modalSliceField');
+    if (d.slice_status === 'failed' && d.slice_error) {
+      document.getElementById('modalSliceErr').textContent = d.slice_error;
+      sliceField.hidden = false;
+    } else {
+      sliceField.hidden = true;
+    }
     modalCreated.textContent = d.created_at || '—';
     modalDesc.textContent = d.description || '（无描述）';
     modalTags.replaceChildren();
@@ -336,8 +348,16 @@ const app = http.createServer(async (req, res) => {
     const o = document.createElement('option'); o.value = t; o.textContent = t; sliceTheme.appendChild(o);
   });
   function openSlice(id) {
-    sliceId = id; sliceMsg.textContent = ''; sliceMsg.style.color = 'var(--text-dim)';
+    sliceId = id;
     sliceGo.disabled = false; sliceGo.textContent = '开始切片';
+    // 上次切片失败的话，把错误原因显示出来——让操作员先看清为什么失败，别盲目重试。
+    const d = JOB_DETAILS[id];
+    if (d && d.slice_status === 'failed' && d.slice_error) {
+      sliceMsg.style.color = 'var(--red)';
+      sliceMsg.textContent = '上次切片失败：' + d.slice_error;
+    } else {
+      sliceMsg.textContent = ''; sliceMsg.style.color = 'var(--text-dim)';
+    }
     // 记住上次选的主题：有存过且仍是可选项就默认选它。
     try {
       const last = localStorage.getItem('jianji_last_slice_theme');

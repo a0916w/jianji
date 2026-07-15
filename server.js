@@ -134,7 +134,7 @@ const app = http.createServer(async (req, res) => {
           <td class="mono">${escapeHtml(j.id)}</td>
           <td>${badge(j.status)}</td>
           <td class="dim mono">${fmtDur(j.duration)}</td>
-          <td class="title">${title}</td>
+          <td class="title" data-title-id="${escapeHtml(j.id)}" data-title="${escapeHtml(j.title || '')}" title="点击修改标题">${title}</td>
           <td class="dim mono">${escapeHtml(j.created_at)}</td>
           <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${play}${dl}${slice}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
         </tr>`;
@@ -203,6 +203,9 @@ const app = http.createServer(async (req, res) => {
   .filters input,.filters select{padding:8px 10px;background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;outline:none}
   .filters input[type=text]{min-width:180px}
   .pager{display:flex;gap:14px;align-items:center;justify-content:center;margin-top:18px}
+  td.title[data-title-id]{cursor:pointer}
+  td.title[data-title-id]:hover{color:var(--accent)}
+  .title-edit{width:100%;padding:5px 7px;background:var(--panel-2);color:var(--text);border:1px solid var(--accent);border-radius:6px;font-size:13px;font-family:inherit;outline:none}
   .btn:hover{opacity:.88;transform:translateY(-1px)}
   .btn-edit{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:#fff}
   .btn-dl{background:color-mix(in srgb,var(--green) 18%,transparent);color:var(--green);border:1px solid color-mix(in srgb,var(--green) 42%,transparent)}
@@ -272,6 +275,48 @@ const app = http.createServer(async (req, res) => {
   const JOB_DETAILS = ${jobDetailsJson};
   const SLICE = ${JSON.stringify({ enabled: sliceCfg.enabled, themes: sliceCfg.themes })};
   const TOKEN = new URLSearchParams(location.search).get('token');
+
+  // 列表行内联改标题：点标题格 → 变输入框 → Enter/失焦保存, Esc 取消。
+  document.addEventListener('click', (e) => {
+    const cell = e.target.closest('td.title[data-title-id]');
+    if (!cell || cell.querySelector('input')) return;
+    const id = cell.dataset.titleId;
+    const cur = cell.dataset.title || '';
+    const input = document.createElement('input');
+    input.type = 'text'; input.value = cur; input.maxLength = 200; input.className = 'title-edit';
+    cell.textContent = '';
+    cell.appendChild(input);
+    input.focus(); input.select();
+    let settled = false;
+    const restore = (text) => { cell.textContent = text || '—'; };
+    const cancel = () => { if (settled) return; settled = true; restore(cur); };
+    const save = async () => {
+      if (settled) return; settled = true;
+      const title = input.value.trim();
+      if (title === cur) { restore(cur); return; }
+      restore('保存中…');
+      try {
+        const r = await fetch('/api/job-update-title?token=' + encodeURIComponent(TOKEN), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, title }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.ok) throw new Error(d.error || '保存失败');
+        cell.dataset.title = title;
+        restore(title);
+        if (JOB_DETAILS[id]) JOB_DETAILS[id].title = title;
+      } catch (err) {
+        restore(cur);
+        alert('保存失败: ' + (err.message || err));
+      }
+    };
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); save(); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+    });
+    input.addEventListener('blur', save);
+  });
+
   document.addEventListener('click', (e) => {
     const btn = e.target.closest('.btn-del');
     if (!btn) return;

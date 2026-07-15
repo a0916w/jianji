@@ -59,13 +59,15 @@ const app = http.createServer(async (req, res) => {
       }
       const jobs = db.listAll();
       const sliceCfg = mingshun.sliceInfo(); // { enabled, themes }
+      // 明顺返回的错误体里中文是 \uXXXX 转义的（如「视频标题重复」），解成可读中文再展示。
+      const decodeU = (s) => String(s || '').replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
       const jobDetails = {};
       for (const j of jobs) {
         jobDetails[j.id] = {
           title: j.title || '', description: j.description || '', tags: j.tags || [],
           status: j.status, mode: j.mode, source: j.source, created_at: j.created_at,
           dl: j.status === 'done' ? `/media/${encodeURIComponent(j.id)}/out.mp4?sign=${sign(j.id)}` : null,
-          slice_status: j.slice_status || '', slice_theme: j.slice_theme || '', slice_video_id: j.slice_video_id || '', slice_error: j.slice_error || '',
+          slice_status: j.slice_status || '', slice_theme: j.slice_theme || '', slice_video_id: j.slice_video_id || '', slice_error: decodeU(j.slice_error || ''),
         };
       }
       const jobDetailsJson = JSON.stringify(jobDetails).replace(/</g, '\\u003c');
@@ -106,7 +108,7 @@ const app = http.createServer(async (req, res) => {
         if (sliceCfg.enabled && j.status === 'done') {
           if (j.slice_status === 'done') slice = `<span class="badge" style="--c:var(--green)" title="video_id=${escapeHtml(j.slice_video_id || '')}">已切片</span>`;
           else if (j.slice_status === 'slicing') slice = `<span class="badge" style="--c:var(--accent)">切片中</span>`;
-          else if (j.slice_status === 'failed') slice = `<span class="badge" style="--c:var(--red);cursor:help" title="${escapeHtml(j.slice_error || '未知错误')}">切片失败</span><button class="btn btn-slice" data-slice="${escapeHtml(j.id)}" title="${escapeHtml(j.slice_error || '')}">重试</button>`;
+          else if (j.slice_status === 'failed') slice = `<span class="badge" style="--c:var(--red);cursor:help" title="${escapeHtml(decodeU(j.slice_error) || '未知错误')}">切片失败</span><button class="btn btn-slice" data-slice="${escapeHtml(j.id)}" title="${escapeHtml(decodeU(j.slice_error))}">重试</button>`;
           else slice = `<button class="btn btn-slice" data-slice="${escapeHtml(j.id)}">切片</button>`;
         }
         const title = j.title ? escapeHtml(j.title) : '<span class="dim">—</span>';
@@ -411,8 +413,8 @@ const app = http.createServer(async (req, res) => {
       }
       const jobs = db.listAll();
       const dayOf = (iso) => (String(iso || '').slice(0, 10) || '未知');
-      const days = new Map();   // 日期 -> { total, submitted, sliced, failed }
-      const themes = new Map(); // 主题 -> { submitted, sliced, failed }
+      const days = new Map();      // 日期 -> { total, submitted, sliced, failed }
+      const dayThemes = new Map(); // 日期||主题 -> { date, theme, submitted, sliced, failed }
       for (const j of jobs) {
         const d = dayOf(j.created_at);
         if (!days.has(d)) days.set(d, { total: 0, submitted: 0, sliced: 0, failed: 0 });
@@ -422,8 +424,9 @@ const app = http.createServer(async (req, res) => {
         if (submitted) {
           day.submitted++;
           const th = String(j.slice_theme);
-          if (!themes.has(th)) themes.set(th, { submitted: 0, sliced: 0, failed: 0 });
-          const t = themes.get(th);
+          const key = d + '||' + th;
+          if (!dayThemes.has(key)) dayThemes.set(key, { date: d, theme: th, submitted: 0, sliced: 0, failed: 0 });
+          const t = dayThemes.get(key);
           t.submitted++;
           if (j.slice_status === 'done') { day.sliced++; t.sliced++; }
           else if (j.slice_status === 'failed') { day.failed++; t.failed++; }
@@ -431,8 +434,10 @@ const app = http.createServer(async (req, res) => {
       }
       const dayRows = [...days.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 30)
         .map(([d, s]) => `<tr><td class="mono">${escapeHtml(d)}</td><td>${s.total}</td><td>${s.submitted}</td><td style="color:var(--green)">${s.sliced}</td><td style="color:var(--red)">${s.failed}</td></tr>`).join('');
-      const themeRows = [...themes.entries()].sort((a, b) => b[1].submitted - a[1].submitted)
-        .map(([th, s]) => `<tr><td>${escapeHtml(th)}</td><td>${s.submitted}</td><td style="color:var(--green)">${s.sliced}</td><td style="color:var(--red)">${s.failed}</td></tr>`).join('');
+      const themeRows = [...dayThemes.values()]
+        .sort((a, b) => b.date.localeCompare(a.date) || a.theme.localeCompare(b.theme))
+        .slice(0, 300)
+        .map((x) => `<tr><td class="mono">${escapeHtml(x.date)}</td><td>${escapeHtml(x.theme)}</td><td>${x.submitted}</td><td style="color:var(--green)">${x.sliced}</td><td style="color:var(--red)">${x.failed}</td></tr>`).join('');
       const html = `<!doctype html>
 <html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>报告 · 智能剪辑</title>
@@ -460,8 +465,8 @@ const app = http.createServer(async (req, res) => {
   </header>
   <h2 class="sec">按天汇总（近 30 天，按创建日期）</h2>
   <div class="card">${dayRows ? `<table><thead><tr><th>日期</th><th>处理数</th><th>提交切片</th><th>切片完成</th><th>切片失败</th></tr></thead><tbody>${dayRows}</tbody></table>` : '<div class="empty">暂无数据</div>'}</div>
-  <h2 class="sec">按分类（切片主题）汇总</h2>
-  <div class="card">${themeRows ? `<table><thead><tr><th>主题</th><th>提交切片</th><th>完成</th><th>失败</th></tr></thead><tbody>${themeRows}</tbody></table>` : '<div class="empty">暂无切片记录</div>'}</div>
+  <h2 class="sec">按分类（切片主题）汇总 · 按天</h2>
+  <div class="card">${themeRows ? `<table><thead><tr><th>日期</th><th>主题</th><th>提交切片</th><th>完成</th><th>失败</th></tr></thead><tbody>${themeRows}</tbody></table>` : '<div class="empty">暂无切片记录</div>'}</div>
 </div></body></html>`;
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
       return res.end(html);

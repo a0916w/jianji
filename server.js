@@ -183,7 +183,7 @@ const app = http.createServer(async (req, res) => {
 <body><div class="wrap">
   <header>
     <a class="logo" href="/" title="返回首页"><span class="bolt">⚡</span><span class="grad">快速智能剪辑</span></a>
-    <div class="meta"><span class="page">任务列表</span><span>共 ${count} 个</span></div>
+    <div class="meta"><span class="page">任务列表</span><span>共 ${count} 个</span><a class="btn btn-info" href="/report?token=${encodeURIComponent(token)}">📊 报告</a></div>
   </header>
   ${body}
 </div>
@@ -398,6 +398,71 @@ const app = http.createServer(async (req, res) => {
 </script>
 </body></html>`;
       // no-referrer：页面地址可能带 ?sign=/?token=，避免点击链接或加载资源时经 Referer 泄漏。
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
+      return res.end(html);
+    }
+
+    // 报告页：一天处理多少 / 提交切片多少 / 按分类(切片主题)分。
+    if (req.method === 'GET' && p === '/report') {
+      const token = u.searchParams.get('token');
+      if (!verifyAdminToken(token)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+        return res.end('forbidden');
+      }
+      const jobs = db.listAll();
+      const dayOf = (iso) => (String(iso || '').slice(0, 10) || '未知');
+      const days = new Map();   // 日期 -> { total, submitted, sliced, failed }
+      const themes = new Map(); // 主题 -> { submitted, sliced, failed }
+      for (const j of jobs) {
+        const d = dayOf(j.created_at);
+        if (!days.has(d)) days.set(d, { total: 0, submitted: 0, sliced: 0, failed: 0 });
+        const day = days.get(d);
+        day.total++;
+        const submitted = !!(j.slice_theme && String(j.slice_theme).length); // 提交过切片 = 选了主题
+        if (submitted) {
+          day.submitted++;
+          const th = String(j.slice_theme);
+          if (!themes.has(th)) themes.set(th, { submitted: 0, sliced: 0, failed: 0 });
+          const t = themes.get(th);
+          t.submitted++;
+          if (j.slice_status === 'done') { day.sliced++; t.sliced++; }
+          else if (j.slice_status === 'failed') { day.failed++; t.failed++; }
+        }
+      }
+      const dayRows = [...days.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 30)
+        .map(([d, s]) => `<tr><td class="mono">${escapeHtml(d)}</td><td>${s.total}</td><td>${s.submitted}</td><td style="color:var(--green)">${s.sliced}</td><td style="color:var(--red)">${s.failed}</td></tr>`).join('');
+      const themeRows = [...themes.entries()].sort((a, b) => b[1].submitted - a[1].submitted)
+        .map(([th, s]) => `<tr><td>${escapeHtml(th)}</td><td>${s.submitted}</td><td style="color:var(--green)">${s.sliced}</td><td style="color:var(--red)">${s.failed}</td></tr>`).join('');
+      const html = `<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>报告 · 智能剪辑</title>
+<style>
+  :root{--bg:#0f1115;--panel:#181c23;--panel-2:#1f2530;--border:#2a3140;--text:#e8ecf3;--text-dim:#8b94a7;--accent:#4f7cff;--green:#2ecc8f;--red:#ff5c6c;--radius:12px}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh;padding:24px}
+  .wrap{max-width:900px;margin:0 auto}
+  header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:8px}
+  .logo{display:flex;align-items:center;gap:8px;text-decoration:none;font-size:20px;font-weight:700;color:var(--text)}
+  a.back{font-size:13px;color:var(--accent);text-decoration:none;border:1px solid var(--border);padding:6px 12px;border-radius:8px}
+  h2.sec{font-size:15px;margin:22px 0 10px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow-x:auto}
+  table{border-collapse:collapse;width:100%;min-width:420px}
+  th{background:var(--panel-2);color:var(--text-dim);font-size:12px;font-weight:600;text-align:left;padding:11px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
+  td{padding:10px 14px;font-size:14px;border-bottom:1px solid var(--border)}
+  tr:last-child td{border-bottom:none}
+  .mono{font-family:ui-monospace,Menlo,monospace;font-size:13px}
+  .empty{padding:40px;text-align:center;color:var(--text-dim)}
+</style></head>
+<body><div class="wrap">
+  <header>
+    <a class="logo" href="/"><span style="color:var(--accent)">⚡</span> 剪辑报告</a>
+    <a class="back" href="/jobs?token=${encodeURIComponent(token)}">← 任务列表</a>
+  </header>
+  <h2 class="sec">按天汇总（近 30 天，按创建日期）</h2>
+  <div class="card">${dayRows ? `<table><thead><tr><th>日期</th><th>处理数</th><th>提交切片</th><th>切片完成</th><th>切片失败</th></tr></thead><tbody>${dayRows}</tbody></table>` : '<div class="empty">暂无数据</div>'}</div>
+  <h2 class="sec">按分类（切片主题）汇总</h2>
+  <div class="card">${themeRows ? `<table><thead><tr><th>主题</th><th>提交切片</th><th>完成</th><th>失败</th></tr></thead><tbody>${themeRows}</tbody></table>` : '<div class="empty">暂无切片记录</div>'}</div>
+</div></body></html>`;
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
       return res.end(html);
     }

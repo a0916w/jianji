@@ -4,7 +4,7 @@ const path = require('path');
 const { render } = require('./lib/render');
 const { run } = require('./lib/util');
 const { sign } = require('./lib/sign');
-const { ffprobeHasAudio } = require('./lib/ffprobe');
+const { ffprobeHasAudio, ffprobeDuration } = require('./lib/ffprobe');
 const mingshun = require('./lib/mingshun');
 
 let botRef = null; // 由 telegram-poll 注入，供成片回传
@@ -52,7 +52,10 @@ function startWorker({ db, workDir }) {
             }
           }
           await render(job, out, { run, defaults: { imageDur: parseInt(process.env.DEFAULT_IMAGE_DUR || '3', 10) } });
-          db.update(job.id, { status: 'done', result_path: out });
+          let outDur = null;
+          try { outDur = await ffprobeDuration(out); }
+          catch (durErr) { console.error('[worker] ffprobeDuration 失败', job.id, (durErr && durErr.message) || durErr); }
+          db.update(job.id, { status: 'done', result_path: out, duration: outDur });
           await maybeSlice(db, job.id, out);
           await deliverResult(job, out);
         } catch (e) {

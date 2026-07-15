@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { createDb } = require('./lib/db');
 const { sign, verify } = require('./lib/sign');
 const { readJsonBody, sendJson } = require('./lib/util');
+const { ffprobeDuration } = require('./lib/ffprobe');
 const mingshun = require('./lib/mingshun');
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -35,8 +36,8 @@ function escapeHtml(v) {
 }
 
 // 网页上传允许的扩展名 → media 类型
-const WEB_UPLOAD_EXT = { '.jpg': 'image', '.jpeg': 'image', '.png': 'image', '.webp': 'image', '.mp4': 'video' };
-const WEB_UPLOAD_MAX_BYTES = 200 * 1024 * 1024;
+const WEB_UPLOAD_EXT = { '.jpg': 'image', '.jpeg': 'image', '.png': 'image', '.webp': 'image', '.mp4': 'video', '.mov': 'video' };
+const WEB_UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2GB（原 200MB 太小，大视频源常见几百 MB~1GB+）
 
 const app = http.createServer(async (req, res) => {
   try {
@@ -68,6 +69,20 @@ const app = http.createServer(async (req, res) => {
         };
       }
       const jobDetailsJson = JSON.stringify(jobDetails).replace(/</g, '\\u003c');
+      // 成片时长展示（秒）。老任务未存 duration 时后台异步补探测（每次翻页最多补几条，
+      // 避免一次性 spawn 太多 ffprobe），下次刷新即显示。
+      const fmtDur = (d) => (typeof d === 'number' && d > 0)
+        ? `${Math.round(d)}s`
+        : '<span class="dim">—</span>';
+      let backfilled = 0;
+      for (const j of jobs) {
+        if (j.status === 'done' && j.result_path && (j.duration == null) && backfilled < 8) {
+          backfilled++;
+          ffprobeDuration(j.result_path)
+            .then((d) => { if (d > 0) db.update(j.id, { duration: d }); })
+            .catch(() => {}); // 补探测失败静默，下次再试
+        }
+      }
       const badge = (s) => {
         const c = s === 'done' ? 'var(--green)'
           : s === 'failed' ? 'var(--red)'
@@ -97,6 +112,7 @@ const app = http.createServer(async (req, res) => {
           <td>${badge(j.status)}</td>
           <td class="dim">${escapeHtml(j.mode)}</td>
           <td><span class="src">${escapeHtml(j.source)}</span></td>
+          <td class="dim mono">${fmtDur(j.duration)}</td>
           <td class="title">${title}</td>
           <td class="dim mono">${escapeHtml(j.created_at)}</td>
           <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${play}${dl}${slice}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
@@ -104,7 +120,7 @@ const app = http.createServer(async (req, res) => {
       }).join('\n');
       const count = jobs.length;
       const body = count ? `<div class="card"><table>
-      <thead><tr><th>编号</th><th>状态</th><th>模式</th><th>来源</th><th>标题</th><th>创建时间</th><th>操作</th></tr></thead>
+      <thead><tr><th>编号</th><th>状态</th><th>模式</th><th>来源</th><th>时长</th><th>标题</th><th>创建时间</th><th>操作</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`
         : `<div class="card"><div class="empty">还没有任务 🎬<br><span class="dim">Telegram 群发相册,或直接开网页上传后点「生成到服务器」</span></div></div>`;
       const html = `<!doctype html>
@@ -172,6 +188,14 @@ const app = http.createServer(async (req, res) => {
   <div class="modal-card">
     <button type="button" class="modal-close" id="modalClose" aria-label="关闭">&times;</button>
     <div class="modal-title" id="modalTitle"></div>
+    <div class="modal-field">
+      <div class="modal-label">标题（可修改）</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="modalTitleInput" maxlength="200" class="slice-select" style="margin-top:0;flex:1" placeholder="成片标题">
+        <button type="button" class="btn btn-primary" id="modalTitleSave" style="padding:9px 16px">保存</button>
+      </div>
+      <div id="modalTitleMsg" style="font-size:12px;margin-top:6px;min-height:14px;color:var(--text-dim)"></div>
+    </div>
     <div class="modal-field" id="modalPlayerField" hidden><div class="modal-label">在线播放</div><video id="modalVideo" class="modal-video" controls preload="metadata" playsinline></video></div>
     <div class="modal-field"><div class="modal-label">状态 / 模式 / 来源</div><div class="modal-value" id="modalMeta"></div></div>
     <div class="modal-field"><div class="modal-label">创建时间</div><div class="modal-value" id="modalCreated"></div></div>
@@ -217,11 +241,20 @@ const app = http.createServer(async (req, res) => {
   const modalDl = document.getElementById('modalDl');
   const modalVideo = document.getElementById('modalVideo');
   const modalPlayerField = document.getElementById('modalPlayerField');
+  const modalTitleInput = document.getElementById('modalTitleInput');
+  const modalTitleSave = document.getElementById('modalTitleSave');
+  const modalTitleMsg = document.getElementById('modalTitleMsg');
+  let modalId = null;
 
   function openModal(id) {
     const d = JOB_DETAILS[id];
     if (!d) return;
+    modalId = id;
     modalTitle.textContent = d.title || '（无标题）';
+    modalTitleInput.value = d.title || '';
+    modalTitleMsg.textContent = '';
+    modalTitleMsg.style.color = 'var(--text-dim)';
+    modalTitleSave.disabled = false;
     modalMeta.textContent = (d.status || '—') + ' / ' + (d.mode || '—') + ' / ' + (d.source || '—');
     modalCreated.textContent = d.created_at || '—';
     modalDesc.textContent = d.description || '（无描述）';
@@ -252,6 +285,35 @@ const app = http.createServer(async (req, res) => {
     modalVideo.pause();
   }
 
+  // 详情里改标题：保存到任务，并就地更新弹窗标题 + 列表标题单元格。
+  modalTitleSave.addEventListener('click', async () => {
+    if (!modalId) return;
+    const title = modalTitleInput.value.trim();
+    modalTitleSave.disabled = true;
+    modalTitleMsg.style.color = 'var(--text-dim)';
+    modalTitleMsg.textContent = '保存中…';
+    try {
+      const r = await fetch('/api/job-update-title?token=' + encodeURIComponent(TOKEN), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: modalId, title }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || '保存失败');
+      if (JOB_DETAILS[modalId]) JOB_DETAILS[modalId].title = title;
+      modalTitle.textContent = title || '（无标题）';
+      const cell = document.querySelector('.btn-info[data-id="' + (window.CSS && CSS.escape ? CSS.escape(modalId) : modalId) + '"]');
+      const td = cell && cell.closest('tr') && cell.closest('tr').querySelector('td.title');
+      if (td) td.textContent = title || '';
+      modalTitleMsg.style.color = 'var(--green)';
+      modalTitleMsg.textContent = '✅ 已保存';
+    } catch (err) {
+      modalTitleMsg.style.color = 'var(--red)';
+      modalTitleMsg.textContent = '❌ ' + (err.message || err);
+    } finally {
+      modalTitleSave.disabled = false;
+    }
+  });
+
   document.addEventListener('click', (e) => {
     const btn = e.target.closest('.btn-info');
     if (btn) { openModal(btn.dataset.id); return; }
@@ -276,6 +338,11 @@ const app = http.createServer(async (req, res) => {
   function openSlice(id) {
     sliceId = id; sliceMsg.textContent = ''; sliceMsg.style.color = 'var(--text-dim)';
     sliceGo.disabled = false; sliceGo.textContent = '开始切片';
+    // 记住上次选的主题：有存过且仍是可选项就默认选它。
+    try {
+      const last = localStorage.getItem('jianji_last_slice_theme');
+      if (last && [...sliceTheme.options].some((o) => o.value === last)) sliceTheme.value = last;
+    } catch (_) {}
     sliceModal.hidden = false;
   }
   function closeSlice() { sliceModal.hidden = true; sliceId = null; }
@@ -286,6 +353,7 @@ const app = http.createServer(async (req, res) => {
   });
   sliceGo.addEventListener('click', async () => {
     if (!sliceId) return;
+    try { localStorage.setItem('jianji_last_slice_theme', sliceTheme.value); } catch (_) {}
     sliceGo.disabled = true; sliceGo.textContent = '切片中…';
     sliceMsg.style.color = 'var(--text-dim)'; sliceMsg.textContent = '正在上传成片到明顺并触发切片，请稍候…';
     try {
@@ -390,7 +458,7 @@ const app = http.createServer(async (req, res) => {
       if (!fp) return sendJson(res, 400, { error: '非法路径' });
       const mediaSign = u.searchParams.get('sign');
       if (!verify(id, mediaSign)) return sendJson(res, 403, { error: '签名无效' });
-      const EXT_CT = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.mp4': 'video/mp4' };
+      const EXT_CT = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.mp4': 'video/mp4', '.mov': 'video/quicktime' };
       const ext = require('path').extname(fp).toLowerCase();
       const ct = EXT_CT[ext];
       if (!ct) return sendJson(res, 415, { error: '不支持的文件类型' });
@@ -467,6 +535,28 @@ const app = http.createServer(async (req, res) => {
       db.remove(id);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
       return res.end(JSON.stringify({ ok: true }));
+    }
+
+    if (req.method === 'POST' && p === '/api/job-update-title') {
+      const body = await readJsonBody(req);
+      const token = u.searchParams.get('token') || body.token;
+      if (!verifyAdminToken(token)) {
+        res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
+        return res.end(JSON.stringify({ error: 'forbidden' }));
+      }
+      const id = body.id;
+      if (typeof id !== 'string' || !id) {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
+        return res.end(JSON.stringify({ error: 'id 缺失' }));
+      }
+      if (!db.get(id)) {
+        res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
+        return res.end(JSON.stringify({ error: '任务不存在' }));
+      }
+      const title = typeof body.title === 'string' ? body.title.trim().slice(0, 200) : '';
+      db.update(id, { title });
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
+      return res.end(JSON.stringify({ ok: true, title }));
     }
 
     if (req.method === 'POST' && p === '/api/submit') {

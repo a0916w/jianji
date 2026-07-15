@@ -100,6 +100,17 @@
   .trim-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
   .trim-row input[type=range] { flex: 1 1 0; min-width: 0; accent-color: var(--accent); height: 4px; }
   .trim-row .val { flex: 0 0 auto; white-space: nowrap; min-width: 34px; text-align: right; }
+  .dur-stepper { display: inline-flex; align-items: center; gap: 8px; }
+  .dur-stepper button {
+    width: 28px; height: 28px; border-radius: 7px;
+    border: 1px solid var(--border, #2a3140); background: var(--panel-2, #1f2530);
+    color: var(--text, #e8ecf3); font-size: 17px; line-height: 1; cursor: pointer;
+    font-family: inherit; display: flex; align-items: center; justify-content: center;
+    transition: border-color .12s, color .12s, transform .08s;
+  }
+  .dur-stepper button:hover { border-color: var(--accent); color: var(--accent); }
+  .dur-stepper button:active { transform: scale(.9); }
+  .dur-stepper .durVal { min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; }
 
   /* 裁剪轨道编辑器 */
   #trimEditor {
@@ -459,7 +470,13 @@ function renderClips() {
       ? `🖼 图片 · <span class="picked">显示 ${picked}s</span>`
       : `总长 ${clip.duration.toFixed(1)}s · <span class="picked">已选 ${picked}s${clip.smart ? " ✨" : ""}</span>`;
     const controls = isImg
-      ? `<div class="trim-row">时长 <input type="range" class="imgDur" min="0.5" max="10" step="0.5" value="${clip.end - clip.start}"> <span class="val">${picked}s</span></div>`
+      ? `<div class="trim-row">时长
+          <div class="dur-stepper">
+            <button type="button" class="durMinus" title="减少 0.5 秒">−</button>
+            <span class="durVal">${picked}s</span>
+            <button type="button" class="durPlus" title="增加 0.5 秒">+</button>
+          </div>
+        </div>`
       : `<div class="clip-meta trim-hint">✂ 点击卡片精细裁剪</div>`;
     if (clip.id === selectedClipId) card.classList.add("selected");
     card.innerHTML = `
@@ -481,10 +498,16 @@ function renderClips() {
       renderClips(); timelineChanged();
     });
     if (isImg) {
-      card.querySelector(".imgDur").addEventListener("input", e => {
-        const d = parseFloat(e.target.value);
+      const setDur = (d) => {
+        d = Math.min(10, Math.max(0.5, Math.round(d * 2) / 2)); // 0.5 步进, 0.5~10s
         clip.start = 0; clip.end = d; clip.duration = d;
         renderClips(); timelineChanged();
+      };
+      card.querySelector(".durMinus").addEventListener("click", e => {
+        e.stopPropagation(); setDur((clip.end - clip.start) - 0.5);
+      });
+      card.querySelector(".durPlus").addEventListener("click", e => {
+        e.stopPropagation(); setDur((clip.end - clip.start) + 0.5);
       });
     } else {
       card.addEventListener("click", () => openTrimEditor(clip));

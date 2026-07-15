@@ -57,7 +57,25 @@ const app = http.createServer(async (req, res) => {
         res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
         return res.end('forbidden');
       }
-      const jobs = db.listAll();
+      const allJobs = db.listAll();
+      // 筛选：标题(q) / 状态(status) / 创建日期(date, YYYY-MM-DD 前缀匹配)。
+      const q = (u.searchParams.get('q') || '').trim().toLowerCase();
+      const fstatus = u.searchParams.get('status') || '';
+      const fdate = (u.searchParams.get('date') || '').trim();
+      const filtered = allJobs.filter((j) => {
+        if (q && !String(j.title || '').toLowerCase().includes(q)) return false;
+        if (fstatus && j.status !== fstatus) return false;
+        if (fdate && !String(j.created_at || '').startsWith(fdate)) return false;
+        return true;
+      });
+      // 分页：50/页。
+      const PER = 50;
+      const total = filtered.length;
+      const pages = Math.max(1, Math.ceil(total / PER));
+      let page = parseInt(u.searchParams.get('page') || '1', 10);
+      if (!Number.isFinite(page) || page < 1) page = 1;
+      if (page > pages) page = pages;
+      const jobs = filtered.slice((page - 1) * PER, page * PER);
       const sliceCfg = mingshun.sliceInfo(); // { enabled, themes }
       // 明顺返回的错误体里中文是 \uXXXX 转义的（如「视频标题重复」），解成可读中文再展示。
       const decodeU = (s) => String(s || '').replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
@@ -115,19 +133,43 @@ const app = http.createServer(async (req, res) => {
         return `<tr>
           <td class="mono">${escapeHtml(j.id)}</td>
           <td>${badge(j.status)}</td>
-          <td class="dim">${escapeHtml(j.mode)}</td>
-          <td><span class="src">${escapeHtml(j.source)}</span></td>
           <td class="dim mono">${fmtDur(j.duration)}</td>
           <td class="title">${title}</td>
           <td class="dim mono">${escapeHtml(j.created_at)}</td>
           <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${play}${dl}${slice}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
         </tr>`;
       }).join('\n');
-      const count = jobs.length;
-      const body = count ? `<div class="card"><table>
-      <thead><tr><th>编号</th><th>状态</th><th>模式</th><th>来源</th><th>时长</th><th>标题</th><th>创建时间</th><th>操作</th></tr></thead>
+      const count = total;
+      const hasFilter = !!(q || fstatus || fdate);
+      const STATUSES = ['editing', 'downloading', 'processing', 'rendering', 'done', 'failed'];
+      const statusOpts = ['<option value="">全部状态</option>']
+        .concat(STATUSES.map((s) => `<option value="${s}"${fstatus === s ? ' selected' : ''}>${s}</option>`)).join('');
+      const filterForm = `<form method="get" action="/jobs" class="filters">
+        <input type="hidden" name="token" value="${escapeHtml(token)}">
+        <input type="text" name="q" value="${escapeHtml(u.searchParams.get('q') || '')}" placeholder="搜索标题">
+        <select name="status">${statusOpts}</select>
+        <input type="date" name="date" value="${escapeHtml(fdate)}">
+        <button type="submit" class="btn btn-primary">筛选</button>
+        <a class="btn btn-info" href="/jobs?token=${encodeURIComponent(token)}">重置</a>
+      </form>`;
+      const mkPageUrl = (pp) => {
+        const sp = new URLSearchParams({ token });
+        if (q) sp.set('q', u.searchParams.get('q'));
+        if (fstatus) sp.set('status', fstatus);
+        if (fdate) sp.set('date', fdate);
+        sp.set('page', String(pp));
+        return '/jobs?' + sp.toString();
+      };
+      const pager = pages > 1 ? `<div class="pager">
+        ${page > 1 ? `<a class="btn btn-info" href="${mkPageUrl(page - 1)}">← 上一页</a>` : ''}
+        <span class="dim">第 ${page} / ${pages} 页 · 共 ${total} 个</span>
+        ${page < pages ? `<a class="btn btn-info" href="${mkPageUrl(page + 1)}">下一页 →</a>` : ''}
+      </div>` : '';
+      const table = count ? `<div class="card"><table>
+      <thead><tr><th>编号</th><th>状态</th><th>时长</th><th>标题</th><th>创建时间</th><th>操作</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`
-        : `<div class="card"><div class="empty">还没有任务 🎬<br><span class="dim">Telegram 群发相册,或直接开网页上传后点「生成到服务器」</span></div></div>`;
+        : `<div class="card"><div class="empty">${hasFilter ? '没有符合条件的任务' : '还没有任务 🎬'}<br><span class="dim">${hasFilter ? '换个筛选条件试试' : 'Telegram 群发相册,或直接开网页上传后点「生成到服务器」'}</span></div></div>`;
+      const body = filterForm + table + pager;
       const html = `<!doctype html>
 <html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>任务列表 · 智能剪辑</title>
@@ -156,7 +198,11 @@ const app = http.createServer(async (req, res) => {
   .badge{display:inline-block;padding:3px 11px;border-radius:20px;font-size:12px;font-weight:600;color:var(--c);background:color-mix(in srgb,var(--c) 16%,transparent);border:1px solid color-mix(in srgb,var(--c) 38%,transparent)}
   .src{font-size:12px;padding:2px 9px;border-radius:6px;background:var(--panel-2);border:1px solid var(--border);color:var(--text-dim)}
   .actions{display:flex;gap:8px}
-  .btn{display:inline-block;padding:6px 14px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;white-space:nowrap;transition:opacity .15s,transform .1s}
+  .btn{display:inline-flex;align-items:center;justify-content:center;text-align:center;padding:6px 14px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;white-space:nowrap;transition:opacity .15s,transform .1s}
+  .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+  .filters input,.filters select{padding:8px 10px;background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;outline:none}
+  .filters input[type=text]{min-width:180px}
+  .pager{display:flex;gap:14px;align-items:center;justify-content:center;margin-top:18px}
   .btn:hover{opacity:.88;transform:translateY(-1px)}
   .btn-edit{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:#fff}
   .btn-dl{background:color-mix(in srgb,var(--green) 18%,transparent);color:var(--green);border:1px solid color-mix(in srgb,var(--green) 42%,transparent)}

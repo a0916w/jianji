@@ -66,13 +66,24 @@ function startWorker({ db, workDir }) {
           await maybeSlice(db, job.id, out);
           await deliverResult(job, out);
         } catch (e) {
-          // 存真实原因：run() 会把 ffmpeg 的 stderr 挂在 e.stderr 上，只存 e.message
-          // 只会看到「Command failed: <命令>」而看不到为啥失败。优先带上 stderr 尾部。
+          // 存真实原因。ffmpeg 正常报错时 run() 把 stderr 挂在 e.stderr 上；但如果进程是
+          // 被"杀掉"的（内存不足 OOM / 超时终止），-loglevel error 下根本来不及输出 stderr
+          // → stderr 为空，只留「Command failed: 命令」。这时改看信号/超时/退出码判真因。
           const msg = String((e && e.message) || e);
           const stderr = e && e.stderr ? String(e.stderr).trim() : '';
-          const full = stderr ? `${msg}\n${stderr}`.slice(-800) : msg.slice(0, 500);
+          let reason = stderr;
+          if (!reason) {
+            if (e && e.killed) {
+              reason = `⚠️ 渲染超时被终止（超过 ${Math.round((600000) / 1000)} 秒）——素材太多/太大，小机跑不完。建议拆成小任务或换更大机器。`;
+            } else if (e && e.signal) {
+              reason = `⚠️ 渲染进程被信号 ${e.signal} 终止——多为内存不足(OOM)被系统杀，通常是素材过多/过大。建议拆分任务、压小视频或加内存/swap。`;
+            } else if (e && typeof e.code === 'number' && e.code !== 0) {
+              reason = `ffmpeg 退出码 ${e.code}（无错误输出）——可能被截断或崩溃。`;
+            }
+          }
+          const full = (reason ? `${msg}\n${reason}` : msg).slice(-900);
           try { db.update(job.id, { status: 'failed', error: full }); } catch {}
-          console.error('[worker] render failed', job.id, msg, stderr ? '| stderr: ' + stderr.slice(-500) : '');
+          console.error('[worker] render failed', job.id, msg, '| signal=' + (e && e.signal), 'killed=' + (e && e.killed), 'code=' + (e && e.code), stderr ? '| stderr: ' + stderr.slice(-500) : '');
         }
       }
     } catch (e) {

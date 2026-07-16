@@ -7,6 +7,7 @@ const { createDb } = require('./lib/db');
 const { sign, verify } = require('./lib/sign');
 const { readJsonBody, sendJson } = require('./lib/util');
 const { ffprobeDuration } = require('./lib/ffprobe');
+const { ensureH264 } = require('./lib/normalize');
 const mingshun = require('./lib/mingshun');
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -84,6 +85,7 @@ const app = http.createServer(async (req, res) => {
         jobDetails[j.id] = {
           title: j.title || '', description: j.description || '', tags: j.tags || [],
           status: j.status, mode: j.mode, source: j.source, created_at: j.created_at,
+          error: decodeU(j.error || ''),
           dl: j.status === 'done' ? `/media/${encodeURIComponent(j.id)}/out.mp4?sign=${sign(j.id)}` : null,
           slice_status: j.slice_status || '', slice_theme: j.slice_theme || '', slice_video_id: j.slice_video_id || '', slice_error: decodeU(j.slice_error || ''),
         };
@@ -129,14 +131,18 @@ const app = http.createServer(async (req, res) => {
           else if (j.slice_status === 'failed') slice = `<span class="badge" style="--c:var(--red);cursor:help" title="${escapeHtml(decodeU(j.slice_error) || '未知错误')}">切片失败</span><button class="btn btn-slice" data-slice="${escapeHtml(j.id)}" title="${escapeHtml(decodeU(j.slice_error))}">重试</button>`;
           else slice = `<button class="btn btn-slice" data-slice="${escapeHtml(j.id)}">切片</button>`;
         }
+        // 失败任务：直接重跑渲染（重回 rendering 队列，worker 会兜底转 H.264 再渲染）。
+        const retry = j.status === 'failed'
+          ? `<button class="btn btn-retry" data-retry="${escapeHtml(j.id)}">重试渲染</button>`
+          : '';
         const title = j.title ? escapeHtml(j.title) : '<span class="dim">—</span>';
         return `<tr>
           <td class="mono">${escapeHtml(j.id)}</td>
-          <td>${badge(j.status)}</td>
+          <td>${badge(j.status)}${j.status === 'failed' && j.error ? `<span class="badge" style="--c:var(--red);cursor:help;margin-left:4px" title="${escapeHtml(decodeU(j.error))}">?</span>` : ''}</td>
           <td class="dim mono">${fmtDur(j.duration)}</td>
           <td class="title" data-title-id="${escapeHtml(j.id)}" data-title="${escapeHtml(j.title || '')}" title="点击修改标题">${title}</td>
           <td class="dim mono">${escapeHtml(j.created_at)}</td>
-          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${play}${dl}${slice}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
+          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${retry}${play}${dl}${slice}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
         </tr>`;
       }).join('\n');
       const count = total;
@@ -213,6 +219,7 @@ const app = http.createServer(async (req, res) => {
   .btn-info{background:var(--panel-2);color:var(--text);border:1px solid var(--border);cursor:pointer;font-family:inherit}
   .btn-play{background:color-mix(in srgb,var(--accent) 20%,transparent);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);cursor:pointer;font-family:inherit}
   .btn-slice{background:color-mix(in srgb,var(--accent-2) 20%,transparent);color:var(--accent-2);border:1px solid color-mix(in srgb,var(--accent-2) 45%,transparent);cursor:pointer;font-family:inherit}
+  .btn-retry{background:color-mix(in srgb,var(--accent) 20%,transparent);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);cursor:pointer;font-family:inherit}
   .slice-select{width:100%;padding:10px 12px;margin-top:6px;background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit}
   .btn-primary{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:#fff;cursor:pointer;font-family:inherit;padding:9px 20px}
   .empty{padding:64px 20px;text-align:center;font-size:16px;line-height:1.9}
@@ -255,6 +262,7 @@ const app = http.createServer(async (req, res) => {
     <div class="modal-field"><div class="modal-label">创建时间</div><div class="modal-value" id="modalCreated"></div></div>
     <div class="modal-field"><div class="modal-label">描述</div><div class="modal-value" id="modalDesc"></div></div>
     <div class="modal-field"><div class="modal-label">标签</div><div class="modal-tags" id="modalTags"></div></div>
+    <div class="modal-field" id="modalRenderField" hidden><div class="modal-label">渲染错误（失败原因）</div><div class="modal-value" id="modalRenderErr" style="color:var(--red)"></div></div>
     <div class="modal-field" id="modalSliceField" hidden><div class="modal-label">切片错误（失败原因）</div><div class="modal-value" id="modalSliceErr" style="color:var(--red)"></div></div>
     <div class="modal-actions"><a class="btn btn-dl" id="modalDl" href="#">下载成品</a></div>
   </div>
@@ -329,6 +337,22 @@ const app = http.createServer(async (req, res) => {
     }).then((res) => { if (res.ok) location.reload(); else alert('删除失败'); });
   });
 
+  // 失败任务重试渲染：重回 rendering 队列，worker 会兜底转 H.264 再渲染。
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn-retry');
+    if (!btn) return;
+    const id = btn.dataset.retry;
+    if (!confirm('重试渲染任务 #' + id + '？将重新排队渲染。')) return;
+    btn.disabled = true; btn.textContent = '重排中…';
+    fetch('/api/job-retry?token=' + encodeURIComponent(TOKEN), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    }).then((res) => {
+      if (res.ok) location.reload();
+      else { alert('重试失败'); btn.disabled = false; btn.textContent = '重试渲染'; }
+    }).catch(() => { alert('重试失败'); btn.disabled = false; btn.textContent = '重试渲染'; });
+  });
+
   const modal = document.getElementById('modal');
   const modalTitle = document.getElementById('modalTitle');
   const modalMeta = document.getElementById('modalMeta');
@@ -353,6 +377,14 @@ const app = http.createServer(async (req, res) => {
     modalTitleMsg.style.color = 'var(--text-dim)';
     modalTitleSave.disabled = false;
     modalMeta.textContent = (d.status || '—') + ' / ' + (d.mode || '—') + ' / ' + (d.source || '—');
+    // 渲染失败时显示错误原因（之前 error 存了 DB 但界面没露出来）。
+    const renderField = document.getElementById('modalRenderField');
+    if (d.status === 'failed' && d.error) {
+      document.getElementById('modalRenderErr').textContent = d.error;
+      renderField.hidden = false;
+    } else {
+      renderField.hidden = true;
+    }
     // 切片失败时显示错误原因，让操作员看清为什么，别盲目重试。
     const sliceField = document.getElementById('modalSliceField');
     if (d.slice_status === 'failed' && d.slice_error) {
@@ -608,9 +640,14 @@ const app = http.createServer(async (req, res) => {
       });
       req.on('error', () => { ws.destroy(); fail(500, { error: '上传失败' }); });
       ws.on('error', () => fail(500, { error: '写入失败' }));
-      ws.on('finish', () => {
+      ws.on('finish', async () => {
         if (responded) return;
         responded = true;
+        // 视频进来即转 H.264（HEVC 浏览器播不了→剪辑页空 + 渲染重）。尽力而为，失败留原文件。
+        if (mediaType === 'video') {
+          try { await ensureH264(fp); }
+          catch (e) { console.error('[web-upload] H.264 归一化失败(留原文件)', fp, (e && e.message) || e); }
+        }
         const media = (job.media || []).concat([{ type: mediaType, path: fp }]);
         db.update(id, { media });
         sendJson(res, 200, { ok: true, name: safeName });
@@ -627,6 +664,7 @@ const app = http.createServer(async (req, res) => {
       return sendJson(res, 200, {
         id: job.id, title: job.title, description: job.description, tags: job.tags || [],
         status: job.status, source: job.source,
+        error: job.error || null,
         result: job.status === 'done' ? `/media/${encodeURIComponent(job.id)}/out.mp4?sign=${sign(job.id)}` : null,
         media: (job.media || []).map((m) => ({ type: m.type, url: `/media/${job.id}/${path.basename(m.path)}?sign=${sig}` })),
       });
@@ -714,6 +752,33 @@ const app = http.createServer(async (req, res) => {
       }
       fs.rmSync(dir, { recursive: true, force: true });
       db.remove(id);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
+      return res.end(JSON.stringify({ ok: true }));
+    }
+
+    // 失败任务重试渲染：重回 rendering 队列，worker tick 会 claim→重渲染（含 H.264 兜底转码）。
+    if (req.method === 'POST' && p === '/api/job-retry') {
+      const body = await readJsonBody(req);
+      const token = u.searchParams.get('token') || body.token;
+      if (!verifyAdminToken(token)) {
+        res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
+        return res.end(JSON.stringify({ error: 'forbidden' }));
+      }
+      const id = body.id;
+      if (typeof id !== 'string' || !id) {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
+        return res.end(JSON.stringify({ error: 'id 缺失' }));
+      }
+      const job = db.get(id);
+      if (!job) {
+        res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
+        return res.end(JSON.stringify({ error: '任务不存在' }));
+      }
+      if (job.status !== 'failed') {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
+        return res.end(JSON.stringify({ error: '仅失败任务可重试' }));
+      }
+      db.update(id, { status: 'rendering', error: null });
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
       return res.end(JSON.stringify({ ok: true }));
     }

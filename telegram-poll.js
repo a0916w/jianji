@@ -8,6 +8,7 @@ const { parseCaption } = require('./lib/caption');
 const { sign } = require('./lib/sign');
 const { ffprobeDuration, readFrames, ffprobeSize } = require('./lib/ffprobe');
 const { smartSegmentForVideo } = require('./lib/smartcut');
+const { ensureH264 } = require('./lib/normalize');
 const { setBot } = require('./worker');
 
 // 相册防抖窗口：跨轮询累积到的相册，需自最后一次收到新素材起静默满这么久才判定"到齐"并建任务。
@@ -84,6 +85,11 @@ async function ingestBatch({ db, workDir, bot, mode, publicBase, batch }) {
     const fp = path.join(dir, `m${i}.${ext}`);
     const g = await httpGet(url, 120000);
     fs.writeFileSync(fp, g.buffer);
+    // 进来即归一化成 H.264（HEVC 浏览器播不了→编辑器空 + 渲染重）。尽力而为，失败留原文件。
+    if (it.type === 'video') {
+      try { await ensureH264(fp); }
+      catch (e) { console.error('[ingest] H.264 归一化失败(留原文件)', fp, (e && e.message) || e); }
+    }
     media.push({ type: it.type, path: fp, tg_file_id: it.file_id });
   }
 

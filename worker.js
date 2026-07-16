@@ -5,6 +5,7 @@ const { render } = require('./lib/render');
 const { run } = require('./lib/util');
 const { sign } = require('./lib/sign');
 const { ffprobeHasAudio, ffprobeDuration } = require('./lib/ffprobe');
+const { ensureH264 } = require('./lib/normalize');
 const mingshun = require('./lib/mingshun');
 
 let botRef = null; // 由 telegram-poll 注入，供成片回传
@@ -44,6 +45,12 @@ function startWorker({ db, workDir }) {
           // 音轨而整任务失败。
           for (const m of job.media || []) {
             if (m && m.type === 'video') {
+              // 渲染前兜底：非 H.264(如 HEVC)就地转码。省去 HEVC 解码、也让重试的旧任务能过；
+              // 尽力而为——转码失败不直接判死，仍让 render 用原文件试(ffmpeg 能解 HEVC)。
+              try { await ensureH264(m.path); }
+              catch (nErr) {
+                console.error('[worker] H.264 归一化失败(继续用原文件)', m.path, (nErr && nErr.message) || nErr);
+              }
               try { m.hasAudio = await ffprobeHasAudio(m.path); }
               catch (probeErr) {
                 console.error('[worker] ffprobeHasAudio 探测失败，按有音轨处理', m.path, (probeErr && probeErr.message) || probeErr);

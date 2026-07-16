@@ -231,6 +231,15 @@
   <div id="clips"></div>
   <div class="empty-tip" id="emptyTip">尚未添加视频片段。添加后每个片段会自动抽帧生成缩略图，可拖拽卡片调整顺序。</div>
 
+  <!-- 从 /jobs 点「剪辑」重进、逐个加载素材时的进度遮罩（大任务几十个素材/GB级用） -->
+  <div id="jobLoad" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(10,12,16,.82);flex-direction:column;align-items:center;justify-content:center;gap:14px">
+    <div id="jobLoadText" style="color:#e8ecf3;font-size:15px;font-weight:600">加载素材…</div>
+    <div style="width:min(80%,360px);height:8px;background:#2a3140;border-radius:999px;overflow:hidden">
+      <div id="jobLoadBar" style="height:100%;width:0;background:linear-gradient(90deg,var(--accent,#4f7cff),var(--accent-2,#7c5bff));transition:width .25s"></div>
+    </div>
+    <div style="color:#8b94a7;font-size:12px">素材较多时请稍候，卡片会陆续出现</div>
+  </div>
+
   <div id="trimEditor" class="hidden">
     <div class="te-head">
       <span class="te-title">✂ 精细裁剪</span>
@@ -1106,6 +1115,25 @@ $("serverBtn").addEventListener("click", async () => {
 
 refreshButtons();
 
+/* ---------------- 加载素材进度（从 /jobs 点剪辑重进时用） ---------------- */
+function showJobLoad(done, total, m) {
+  const el = document.getElementById("jobLoad");
+  if (!el) return;
+  el.style.display = "flex";
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  const bar = document.getElementById("jobLoadBar");
+  if (bar) bar.style.width = pct + "%";
+  const txt = document.getElementById("jobLoadText");
+  if (txt) {
+    const kind = m && m.type === "image" ? "（图片）" : m && m.type ? "（视频）" : "";
+    txt.textContent = `加载素材 ${Math.min(done + 1, total)} / ${total}${kind}`;
+  }
+}
+function hideJobLoad() {
+  const el = document.getElementById("jobLoad");
+  if (el) el.style.display = "none";
+}
+
 /* ---------------- Telegram 任务对接 ---------------- */
 (async function initFromJob() {
   const q = new URLSearchParams(location.search);
@@ -1118,28 +1146,27 @@ refreshButtons();
     if (!r.ok) throw new Error("任务加载失败");
     const data = await r.json();
     if (data.title) $("titleInput").value = data.title;   // 回显任务标题
-    // 预加载媒体为 File（fetch blob → File），复用现有 addFiles
-    const files = [];
-    for (const m of data.media) {
-      const b = await (await fetch(m.url)).blob();
-      const name = (m.url.split("/").pop() || "").split("?")[0]; // 去掉 ?sign 查询串，卡片名才干净
-      files.push(new File([b], name, { type: b.type || (m.type === "image" ? "image/jpeg" : "video/mp4") }));
+    // 逐个加载素材（fetch blob → File → addFiles 单个），带进度条。大任务(几十个素材/GB级)
+    // 不再一口气拉全部、白屏无反馈；卡片随加载渐进出现。每个 clip 打上原始 media 下标(mediaIndex)，
+    // render.js 按 job.media[c.index] 取文件——逐个加 + 显式赋 k，即便某素材失败也不会错位。
+    const total = (data.media || []).length;
+    showJobLoad(0, total);
+    for (let k = 0; k < total; k++) {
+      const m = data.media[k];
+      showJobLoad(k, total, m);
+      try {
+        const b = await (await fetch(m.url)).blob();
+        const name = (m.url.split("/").pop() || "").split("?")[0]; // 去掉 ?sign 查询串，卡片名才干净
+        const file = new File([b], name, { type: b.type || (m.type === "image" ? "image/jpeg" : "video/mp4") });
+        const before = clips.length;
+        await addFiles([file]);
+        for (let j = before; j < clips.length; j++) clips[j].mediaIndex = k;
+      } catch (e) {
+        console.warn("素材加载失败，跳过", m && m.url, (e && e.message) || e);
+      }
     }
-    const startLen = clips.length;
-    await addFiles(files);
-    // C1 修复：render.js 按 job.media[c.index]（原始 ingest 顺序）取媒体文件，
-    // 而不是按时间轴当前顺序。addFiles 是顺序 await 且不重排，新增的 clips 与
-    // data.media 一一对应；万一有素材解析失败导致数量不一致，退化为按文件名匹配。
-    const newClips = clips.slice(startLen);
-    if (newClips.length === data.media.length) {
-      newClips.forEach((c, k) => { c.mediaIndex = k; });
-    } else {
-      const nameToIndex = new Map();
-      data.media.forEach((m, k) => { nameToIndex.set((m.url.split("/").pop() || "").split("?")[0], k); });
-      newClips.forEach((c) => {
-        if (nameToIndex.has(c.name)) c.mediaIndex = nameToIndex.get(c.name);
-      });
-    }
+    showJobLoad(total, total);
+    hideJobLoad();
     // 「导出合成视频」改成提交：克隆节点摘除原有的本地 MediaRecorder 导出监听，
     // 避免点击时旧的 addEventListener 处理器与新的提交逻辑同时触发。
     const oldBtn = $("exportBtn");

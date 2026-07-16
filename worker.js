@@ -8,6 +8,10 @@ const { ffprobeHasAudio, ffprobeDuration } = require('./lib/ffprobe');
 const { ensureH264 } = require('./lib/normalize');
 const mingshun = require('./lib/mingshun');
 
+// 渲染超时：长片(多段 xfade 拼接)编码很慢，默认给 3 小时；可用 RENDER_TIMEOUT_MS 覆盖。
+// 只用于防 ffmpeg 真卡死时任务永远挂着，正常长片不该被它误杀。
+const RENDER_TIMEOUT_MS = parseInt(process.env.RENDER_TIMEOUT_MS || '10800000', 10);
+
 let botRef = null; // 由 telegram-poll 注入，供成片回传
 function setBot(bot, resultChat, publicBase) { botRef = { bot, resultChat, publicBase }; }
 
@@ -58,7 +62,7 @@ function startWorker({ db, workDir }) {
               }
             }
           }
-          await render(job, out, { run, defaults: { imageDur: parseInt(process.env.DEFAULT_IMAGE_DUR || '3', 10) } });
+          await render(job, out, { run, timeoutMs: RENDER_TIMEOUT_MS, defaults: { imageDur: parseInt(process.env.DEFAULT_IMAGE_DUR || '3', 10) } });
           let outDur = null;
           try { outDur = await ffprobeDuration(out); }
           catch (durErr) { console.error('[worker] ffprobeDuration 失败', job.id, (durErr && durErr.message) || durErr); }
@@ -74,7 +78,7 @@ function startWorker({ db, workDir }) {
           let reason = stderr;
           if (!reason) {
             if (e && e.killed) {
-              reason = `⚠️ 渲染超时被终止（超过 ${Math.round((600000) / 1000)} 秒）——素材太多/太大，小机跑不完。建议拆成小任务或换更大机器。`;
+              reason = `⚠️ 渲染超时被终止（超过 ${Math.round(RENDER_TIMEOUT_MS / 60000)} 分钟）——素材太多/太大，小机跑不完。建议拆成小任务或换更大机器。`;
             } else if (e && e.signal) {
               reason = `⚠️ 渲染进程被信号 ${e.signal} 终止——多为内存不足(OOM)被系统杀，通常是素材过多/过大。建议拆分任务、压小视频或加内存/swap。`;
             } else if (e && typeof e.code === 'number' && e.code !== 0) {

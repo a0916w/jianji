@@ -32,6 +32,25 @@ function verifyAdminToken(token) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+// 运营指标接口 /api/report/ops 的 Bearer 鉴权（provider 契约，运营系统 ops-report 来拉）。
+// 未设 REPORT_API_TOKEN 则关闭端点(503，不 fail-open)；比较定长防时序攻击。
+function reportAuthReject(req, res) {
+  const expected = process.env.REPORT_API_TOKEN || '';
+  if (!expected) {
+    res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ error: '运营指标接口未启用（请设置 REPORT_API_TOKEN）' }));
+    return true;
+  }
+  const h = req.headers['authorization'] || '';
+  const provided = h.startsWith('Bearer ') ? h.slice(7) : '';
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length === b.length && crypto.timingSafeEqual(a, b)) return false;
+  res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify({ error: 'invalid token' }));
+  return true;
+}
+
 function escapeHtml(v) {
   return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -525,6 +544,73 @@ const app = http.createServer(async (req, res) => {
       // no-referrer：页面地址可能带 ?sign=/?token=，避免点击链接或加载资源时经 Referer 泄漏。
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
       return res.end(html);
+    }
+
+    // 标准运营指标接口：运营系统(ops-report)按 /api/report/ops 通用 sections[] 契约拉取。
+    // Bearer REPORT_API_TOKEN 保护；from/to(YYYY-MM-DD，缺省近90天)按 created_at 过滤。
+    // 运营系统零代码——那边只加一条数据源(ops_endpoint=本地址)即在「运营指标」页显示。
+    if (req.method === 'GET' && p === '/api/report/ops') {
+      if (reportAuthReject(req, res)) return;
+      const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+      let from = (u.searchParams.get('from') || '').trim();
+      let to = (u.searchParams.get('to') || '').trim();
+      if (!from && !to) {
+        to = new Date().toISOString().slice(0, 10);
+        from = new Date(Date.now() - 89 * 86400000).toISOString().slice(0, 10);
+      } else if (!DATE_RE.test(from) || !DATE_RE.test(to) || from > to) {
+        return sendJson(res, 400, { error: 'from & to (YYYY-MM-DD) required, from<=to' });
+      }
+      const dayOf = (iso) => String(iso || '').slice(0, 10);
+      const days = new Map();      // date -> { date, total, done, failed, sliced }
+      const dayThemes = new Map(); // date||theme -> { date, theme, submitted, sliced, failed }
+      for (const j of db.listAll()) {
+        const d = dayOf(j.created_at);
+        if (d < from || d > to) continue;
+        if (!days.has(d)) days.set(d, { date: d, total: 0, done: 0, failed: 0, sliced: 0 });
+        const day = days.get(d);
+        day.total++;
+        if (j.status === 'done') day.done++;
+        else if (j.status === 'failed') day.failed++;
+        if (j.slice_theme && String(j.slice_theme).length) {
+          const th = String(j.slice_theme);
+          const key = d + '||' + th;
+          if (!dayThemes.has(key)) dayThemes.set(key, { date: d, theme: th, submitted: 0, sliced: 0, failed: 0 });
+          const t = dayThemes.get(key);
+          t.submitted++;
+          if (j.slice_status === 'done') { day.sliced++; t.sliced++; }
+          else if (j.slice_status === 'failed') t.failed++;
+        }
+      }
+      const dayRows = [...days.values()].sort((a, b) => b.date.localeCompare(a.date));
+      const themeRows = [...dayThemes.values()].sort((a, b) => b.date.localeCompare(a.date) || a.theme.localeCompare(b.theme));
+      const sections = [
+        {
+          key: 'clip_daily', title: '剪辑任务 · 按天', type: 'table',
+          columns: [
+            { key: 'date', label: '日期', fmt: 'date' },
+            { key: 'total', label: '任务数', fmt: 'int' },
+            { key: 'done', label: '渲染完成', fmt: 'int' },
+            { key: 'failed', label: '渲染失败', fmt: 'int' },
+            { key: 'sliced', label: '已切片', fmt: 'int' },
+          ],
+          rows: dayRows.map((s) => ({ date: s.date, total: s.total, done: s.done, failed: s.failed, sliced: s.sliced })),
+        },
+        {
+          key: 'slice_by_theme', title: '切片 · 按主题', type: 'table',
+          columns: [
+            { key: 'date', label: '日期', fmt: 'date' },
+            { key: 'theme', label: '主题', fmt: 'text' },
+            { key: 'submitted', label: '提交切片', fmt: 'int' },
+            { key: 'sliced', label: '切片完成', fmt: 'int' },
+            { key: 'failed', label: '切片失败', fmt: 'int' },
+          ],
+          rows: themeRows.map((x) => ({ date: x.date, theme: x.theme, submitted: x.submitted, sliced: x.sliced, failed: x.failed })),
+        },
+      ];
+      return sendJson(res, 200, {
+        project_code: (u.searchParams.get('project_code') || '').trim(),
+        from, to, timezone: 'UTC', sections,
+      });
     }
 
     // 报告页：一天处理多少 / 提交切片多少 / 按分类(切片主题)分。

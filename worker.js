@@ -66,8 +66,13 @@ function startWorker({ db, workDir }) {
           await maybeSlice(db, job.id, out);
           await deliverResult(job, out);
         } catch (e) {
-          try { db.update(job.id, { status: 'failed', error: String((e && e.message) || e).slice(0, 300) }); } catch {}
-          console.error('[worker] render failed', job.id, (e && e.message) || e);
+          // 存真实原因：run() 会把 ffmpeg 的 stderr 挂在 e.stderr 上，只存 e.message
+          // 只会看到「Command failed: <命令>」而看不到为啥失败。优先带上 stderr 尾部。
+          const msg = String((e && e.message) || e);
+          const stderr = e && e.stderr ? String(e.stderr).trim() : '';
+          const full = stderr ? `${msg}\n${stderr}`.slice(-800) : msg.slice(0, 500);
+          try { db.update(job.id, { status: 'failed', error: full }); } catch {}
+          console.error('[worker] render failed', job.id, msg, stderr ? '| stderr: ' + stderr.slice(-500) : '');
         }
       }
     } catch (e) {

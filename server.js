@@ -160,8 +160,9 @@ const app = http.createServer(async (req, res) => {
           <td>${badge(j.status)}${j.status === 'failed' && j.error ? `<span class="badge" style="--c:var(--red);cursor:help;margin-left:4px" title="${escapeHtml(decodeU(j.error))}">?</span>` : ''}</td>
           <td class="dim mono">${fmtDur(j.duration)}</td>
           <td class="title" data-title-id="${escapeHtml(j.id)}" data-title="${escapeHtml(j.title || '')}" title="点击修改标题">${title}</td>
-          <td class="dim mono">${escapeHtml(j.created_at)}</td>
-          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${retry}${play}${dl}${slice}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
+          <td class="dim mono">${escapeHtml((j.created_at || '').slice(0, 10))}</td>
+          <td>${slice || '<span class="dim">—</span>'}</td>
+          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${retry}${play}${dl}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
         </tr>`;
       }).join('\n');
       const count = total;
@@ -191,7 +192,7 @@ const app = http.createServer(async (req, res) => {
         ${page < pages ? `<a class="btn btn-info" href="${mkPageUrl(page + 1)}">下一页 →</a>` : ''}
       </div>` : '';
       const table = count ? `<div class="card"><table>
-      <thead><tr><th>编号</th><th>状态</th><th>时长</th><th>标题</th><th>创建时间</th><th>操作</th></tr></thead>
+      <thead><tr><th>编号</th><th>状态</th><th>时长</th><th>标题</th><th>创建时间</th><th>切片</th><th>操作</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`
         : `<div class="card"><div class="empty">${hasFilter ? '没有符合条件的任务' : '还没有任务 🎬'}<br><span class="dim">${hasFilter ? '换个筛选条件试试' : 'Telegram 群发相册,或直接开网页上传后点「生成到服务器」'}</span></div></div>`;
       const body = filterForm + table + pager;
@@ -279,7 +280,14 @@ const app = http.createServer(async (req, res) => {
     <div class="modal-field" id="modalPlayerField" hidden><div class="modal-label">在线播放</div><video id="modalVideo" class="modal-video" controls preload="metadata" playsinline></video></div>
     <div class="modal-field"><div class="modal-label">状态 / 模式 / 来源</div><div class="modal-value" id="modalMeta"></div></div>
     <div class="modal-field"><div class="modal-label">创建时间</div><div class="modal-value" id="modalCreated"></div></div>
-    <div class="modal-field"><div class="modal-label">明顺切片主题</div><div class="modal-value" id="modalTheme"></div></div>
+    <div class="modal-field">
+      <div class="modal-label">明顺切片主题（可修改，重试渲染后按此主题切片）</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="modalTheme" class="slice-select" style="margin-top:0;flex:1"></select>
+        <button type="button" class="btn btn-primary" id="modalThemeSave" style="padding:9px 16px">保存</button>
+      </div>
+      <div id="modalThemeMsg" style="font-size:12px;margin-top:6px;min-height:14px;color:var(--text-dim)"></div>
+    </div>
     <div class="modal-field" id="modalRenderField" hidden><div class="modal-label">渲染错误（失败原因）</div><div class="modal-value" id="modalRenderErr" style="color:var(--red)"></div></div>
     <div class="modal-field" id="modalSliceField" hidden><div class="modal-label">切片错误（失败原因）</div><div class="modal-value" id="modalSliceErr" style="color:var(--red)"></div></div>
     <div class="modal-actions"><a class="btn btn-dl" id="modalDl" href="#">下载成品</a></div>
@@ -412,7 +420,9 @@ const app = http.createServer(async (req, res) => {
       sliceField.hidden = true;
     }
     modalCreated.textContent = (d.created_at || '—').slice(0, 10); // 只显示日期
-    modalTheme.textContent = d.slice_theme || '（未选主题）';
+    modalTheme.value = d.slice_theme || '';
+    document.getElementById('modalThemeMsg').textContent = '';
+    document.getElementById('modalThemeMsg').style.color = 'var(--text-dim)';
     if (d.dl) {
       modalDl.href = d.dl;
       modalDl.setAttribute('download', 'out-' + id + '.mp4');
@@ -459,6 +469,41 @@ const app = http.createServer(async (req, res) => {
       modalTitleMsg.textContent = '❌ ' + (err.message || err);
     } finally {
       modalTitleSave.disabled = false;
+    }
+  });
+
+  // 填充「改主题」下拉：空选项 + 配置的主题。
+  {
+    const empty = document.createElement('option');
+    empty.value = ''; empty.textContent = '（不设主题 / 不切片）';
+    modalTheme.appendChild(empty);
+    (SLICE.themes || []).forEach((t) => {
+      const o = document.createElement('option');
+      o.value = t; o.textContent = t;
+      modalTheme.appendChild(o);
+    });
+  }
+
+  // 详情里改明顺切片主题：只改 slice_theme，不立刻切片；重试渲染后 worker 按此主题切。
+  document.getElementById('modalThemeSave').addEventListener('click', async () => {
+    if (!modalId) return;
+    const theme = modalTheme.value;
+    const msg = document.getElementById('modalThemeMsg');
+    const btn = document.getElementById('modalThemeSave');
+    btn.disabled = true; msg.style.color = 'var(--text-dim)'; msg.textContent = '保存中…';
+    try {
+      const r = await fetch('/api/set-theme?token=' + encodeURIComponent(TOKEN), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: modalId, theme }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || '保存失败');
+      if (JOB_DETAILS[modalId]) JOB_DETAILS[modalId].slice_theme = theme;
+      msg.style.color = 'var(--green)'; msg.textContent = '✅ 已保存，重试渲染后按此主题切片';
+    } catch (err) {
+      msg.style.color = 'var(--red)'; msg.textContent = '❌ ' + (err.message || err);
+    } finally {
+      btn.disabled = false;
     }
   });
 
@@ -942,6 +987,25 @@ const app = http.createServer(async (req, res) => {
         try { db.update(id, { slice_status: 'failed', slice_error: msg }); } catch (_) {}
         return sendJson(res, 500, { error: '切片失败: ' + msg });
       }
+    }
+
+    // 只改明顺切片主题（不立刻切片）——渲染完成后 worker 会按这个主题自动切片；
+    // 供「改主题再重试渲染」用。不要求 status=done（失败任务也能先改好主题再重试）。
+    if (req.method === 'POST' && p === '/api/set-theme') {
+      const body = await readJsonBody(req);
+      const id = body.id;
+      const token = u.searchParams.get('token') || body.token;
+      const sig = u.searchParams.get('sign') || body.sign;
+      const authed = verifyAdminToken(token) || (typeof id === 'string' && !!id && verify(id, sig));
+      if (!authed) return sendJson(res, 403, { error: '未授权' });
+      if (typeof id !== 'string' || !id) return sendJson(res, 400, { error: 'id 缺失' });
+      const job = db.get(id);
+      if (!job) return sendJson(res, 404, { error: '任务不存在' });
+      const mc = mingshun.cfg();
+      const theme = typeof body.theme === 'string' ? body.theme.trim() : '';
+      if (mc.themes.length && theme && !mc.themes.includes(theme)) return sendJson(res, 400, { error: '非法主题' });
+      db.update(id, { slice_theme: theme });
+      return sendJson(res, 200, { ok: true, slice_theme: theme });
     }
 
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });

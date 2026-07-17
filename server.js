@@ -104,7 +104,7 @@ const app = http.createServer(async (req, res) => {
         jobDetails[j.id] = {
           title: j.title || '', description: j.description || '', tags: j.tags || [],
           status: j.status, mode: j.mode, source: j.source, created_at: j.created_at,
-          error: decodeU(j.error || ''),
+          error: decodeU(j.error || ''), render_ms: j.render_ms != null ? j.render_ms : null,
           dl: j.status === 'done' ? `/media/${encodeURIComponent(j.id)}/out.mp4?sign=${sign(j.id)}` : null,
           slice_status: j.slice_status || '', slice_theme: j.slice_theme || '', slice_video_id: j.slice_video_id || '', slice_error: decodeU(j.slice_error || ''),
         };
@@ -280,6 +280,7 @@ const app = http.createServer(async (req, res) => {
     <div class="modal-field" id="modalPlayerField" hidden><div class="modal-label">在线播放</div><video id="modalVideo" class="modal-video" controls preload="metadata" playsinline></video></div>
     <div class="modal-field"><div class="modal-label">状态 / 模式 / 来源</div><div class="modal-value" id="modalMeta"></div></div>
     <div class="modal-field"><div class="modal-label">创建时间</div><div class="modal-value" id="modalCreated"></div></div>
+    <div class="modal-field"><div class="modal-label">生成耗时（渲染用时）</div><div class="modal-value" id="modalRenderMs"></div></div>
     <div class="modal-field">
       <div class="modal-label">明顺切片主题（可修改，重试渲染后按此主题切片）</div>
       <div style="display:flex;gap:8px;align-items:center">
@@ -426,6 +427,14 @@ const app = http.createServer(async (req, res) => {
       sliceField.hidden = true;
     }
     modalCreated.textContent = (d.created_at || '—').slice(0, 10); // 只显示日期
+    // 生成耗时（毫秒 → 人类可读）。
+    const rms = d.render_ms;
+    let rtxt = '—';
+    if (rms != null) {
+      const s = Math.round(rms / 1000);
+      rtxt = s < 60 ? s + ' 秒' : Math.floor(s / 60) + ' 分 ' + (s % 60) + ' 秒';
+    }
+    document.getElementById('modalRenderMs').textContent = rtxt;
     modalTheme.value = d.slice_theme || '';
     document.getElementById('modalThemeMsg').textContent = '';
     document.getElementById('modalThemeMsg').style.color = 'var(--text-dim)';

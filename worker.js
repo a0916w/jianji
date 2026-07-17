@@ -62,11 +62,13 @@ function startWorker({ db, workDir }) {
               }
             }
           }
+          const renderT0 = Date.now();
           await render(job, out, { run, timeoutMs: RENDER_TIMEOUT_MS, defaults: { imageDur: parseInt(process.env.DEFAULT_IMAGE_DUR || '3', 10) } });
+          const renderMs = Date.now() - renderT0; // 生成耗时（wall-clock）
           let outDur = null;
           try { outDur = await ffprobeDuration(out); }
           catch (durErr) { console.error('[worker] ffprobeDuration 失败', job.id, (durErr && durErr.message) || durErr); }
-          db.update(job.id, { status: 'done', result_path: out, duration: outDur });
+          db.update(job.id, { status: 'done', result_path: out, duration: outDur, render_ms: renderMs });
           await maybeSlice(db, job.id, out);
           await deliverResult(job, out);
         } catch (e) {

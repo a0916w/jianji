@@ -140,30 +140,36 @@ function startWorker({ db, workDir }) {
   // 定时清理：删掉 PRUNE_DAYS(默认7) 天前【终态任务】的源素材文件，释放磁盘。
   // 保留 out.mp4(成片,可下载/重切) 和任务记录；只删源素材(几百MB~GB级，占空间大头)。
   // 清完的老任务若再点「重试渲染」会因源文件缺失而失败(显示友好提示)，符合预期。
+  // 两档：源素材超 PRUNE_DAYS(默认7)天删；成片 out.mp4 超 PRUNE_RESULT_DAYS(默认30)天再删。
   function pruneOldMedia() {
     try {
-      const days = parseInt(process.env.PRUNE_DAYS || '7', 10);
-      const cutoff = Date.now() - days * 86400000;
+      const srcDays = parseInt(process.env.PRUNE_DAYS || '7', 10);
+      const outDays = parseInt(process.env.PRUNE_RESULT_DAYS || '30', 10);
+      const srcCutoff = Date.now() - srcDays * 86400000;
+      const outCutoff = Date.now() - outDays * 86400000;
       const baseResolved = path.resolve(workDir);
       let files = 0, bytes = 0;
       for (const j of db.listAll()) {
         const t = j.created_at ? Date.parse(j.created_at) : NaN;
-        if (!(t < cutoff)) continue;                                // 不到天数 / 无时间
+        if (!(t < srcCutoff)) continue;                             // 不到 7 天 / 无时间
         if (j.status !== 'done' && j.status !== 'failed') continue; // 只清终态，别动进行中的
         const dir = path.resolve(workDir, String(j.id));
         if (path.dirname(dir) !== baseResolved) continue;           // 防路径穿越
+        const outExpired = t < outCutoff;                           // 超 30 天连成片一起删
         let list;
         try { list = fs.readdirSync(dir); } catch { continue; }
         for (const f of list) {
-          if (f === 'out.mp4') continue;                            // 保留成片
+          if (f === 'out.mp4' && !outExpired) continue;             // 30 天内保留成片
           try {
             const fp = path.join(dir, f);
             const st = fs.statSync(fp);
             if (st.isFile()) { fs.unlinkSync(fp); files++; bytes += st.size; }
           } catch { /* 单文件删失败跳过 */ }
         }
+        // 目录空了(素材+成片都删光)顺手删掉空目录；记录保留在库里看历史。
+        if (outExpired) { try { fs.rmdirSync(dir); } catch { /* 非空/不存在忽略 */ } }
       }
-      if (files) console.log(`[worker] 清理 ${days} 天前素材：删 ${files} 个文件，约 ${Math.round(bytes / 1048576)} MB`);
+      if (files) console.log(`[worker] 清理旧文件：删 ${files} 个（素材>${srcDays}天，成片>${outDays}天），约 ${Math.round(bytes / 1048576)} MB`);
     } catch (e) {
       console.error('[worker] 素材清理失败', (e && e.message) || e);
     }

@@ -33,6 +33,19 @@ function startWorker({ db, workDir }) {
     console.error('[worker] 孤儿任务重排失败', (e && e.message) || e);
   }
 
+  // 切片孤儿：切片是后台异步跑的，进程重启/崩溃时正在切片(slice_status='slicing')的任务，
+  // 后台 promise 已随进程消失，状态会永远卡「切片中」没人收尾。启动时标记为失败并提示，
+  // 让操作员能看到并点「重试切片」重新提交。
+  try {
+    const stuck = db._db.prepare("SELECT id FROM jobs WHERE slice_status='slicing'").all();
+    if (stuck.length) {
+      stuck.forEach((r) => db.update(r.id, { slice_status: 'failed', slice_error: '服务重启导致切片中断，请点「重试切片」重新提交' }));
+      console.log(`[worker] 启动时重置 ${stuck.length} 个卡「切片中」的孤儿任务 → failed`);
+    }
+  } catch (e) {
+    console.error('[worker] 切片孤儿重置失败', (e && e.message) || e);
+  }
+
   // M1：claim + 渲染整体包一层 try/catch，任何抛出都被吞掉记录日志，
   // 保证 finally 里的重新调度一定执行，循环不会因为一次异常永久停摆。
   const tick = async () => {

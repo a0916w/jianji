@@ -126,13 +126,14 @@ const app = http.createServer(async (req, res) => {
             .catch(() => {}); // 补探测失败静默，下次再试
         }
       }
+      const STATUS_LABEL = { editing: '编辑中', downloading: '下载中', processing: '渲染中', rendering: '待渲染', done: '完成', failed: '失败', slicing: '切片中' };
       const badge = (s) => {
         const c = s === 'done' ? 'var(--green)'
           : s === 'failed' ? 'var(--red)'
           : (s === 'rendering' || s === 'processing') ? 'var(--accent)'
           : s === 'editing' ? 'var(--accent-2)'
           : 'var(--text-dim)';
-        return `<span class="badge" style="--c:${c}">${escapeHtml(s)}</span>`;
+        return `<span class="badge" style="--c:${c}">${escapeHtml(STATUS_LABEL[s] || s)}</span>`;
       };
       const rows = jobs.map((j) => {
         const editUrl = `/edit?job=${encodeURIComponent(j.id)}&sign=${sign(j.id)}`;
@@ -167,8 +168,9 @@ const app = http.createServer(async (req, res) => {
       const count = total;
       const hasFilter = !!(q || fstatus || fdate);
       const STATUSES = ['editing', 'downloading', 'processing', 'rendering', 'done', 'failed'];
+      const STATUS_ZH = { editing: '编辑中', downloading: '下载中', processing: '渲染中', rendering: '待渲染', done: '完成', failed: '失败' };
       const statusOpts = ['<option value="">全部状态</option>']
-        .concat(STATUSES.map((s) => `<option value="${s}"${fstatus === s ? ' selected' : ''}>${s}</option>`)).join('');
+        .concat(STATUSES.map((s) => `<option value="${s}"${fstatus === s ? ' selected' : ''}>${STATUS_ZH[s] || s}</option>`)).join('');
       const filterForm = `<form method="get" action="/jobs" class="filters">
         <input type="hidden" name="token" value="${escapeHtml(token)}">
         <input type="text" name="q" value="${escapeHtml(u.searchParams.get('q') || '')}" placeholder="搜索标题">

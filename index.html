@@ -237,6 +237,11 @@
     <div style="width:min(80%,360px);height:8px;background:#2a3140;border-radius:999px;overflow:hidden">
       <div id="jobLoadBar" style="height:100%;width:0;background:linear-gradient(90deg,var(--accent,#4f7cff),var(--accent-2,#7c5bff));transition:width .25s"></div>
     </div>
+    <!-- 当前这个素材自己的下载进度（大视频能看到下到多少）。 -->
+    <div id="jobFileText" style="color:#8b94a7;font-size:12px;min-height:14px">当前素材 0%</div>
+    <div style="width:min(80%,360px);height:5px;background:#2a3140;border-radius:999px;overflow:hidden">
+      <div id="jobFileBar" style="height:100%;width:0;background:var(--green,#2ecc8f);transition:width .12s"></div>
+    </div>
     <div style="color:#8b94a7;font-size:12px">素材较多时请稍候，卡片会陆续出现</div>
   </div>
 
@@ -1133,6 +1138,31 @@ function hideJobLoad() {
   const el = document.getElementById("jobLoad");
   if (el) el.style.display = "none";
 }
+// 当前素材自己的下载进度条（frac 0~1）。
+function setFileProgress(frac) {
+  const pct = Math.max(0, Math.min(100, Math.round(frac * 100)));
+  const bar = document.getElementById("jobFileBar");
+  const txt = document.getElementById("jobFileText");
+  if (bar) bar.style.width = pct + "%";
+  if (txt) txt.textContent = "当前素材 " + pct + "%";
+}
+// 边下边报进度地拉 blob（有 content-length 才能测；拿不到就直接 blob 并置 100%）。
+async function fetchBlobWithProgress(url, onProgress) {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error("HTTP " + resp.status);
+  const total = +(resp.headers.get("content-length") || 0);
+  if (!resp.body || !total) { onProgress(1); return await resp.blob(); }
+  const reader = resp.body.getReader();
+  const chunks = []; let loaded = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value); loaded += value.length;
+    onProgress(loaded / total);
+  }
+  onProgress(1);
+  return new Blob(chunks, { type: resp.headers.get("content-type") || "" });
+}
 
 /* ---------------- Telegram 任务对接 ---------------- */
 (async function initFromJob() {
@@ -1154,8 +1184,9 @@ function hideJobLoad() {
     for (let k = 0; k < total; k++) {
       const m = data.media[k];
       showJobLoad(k, total, m);
+      setFileProgress(0); // 每个素材从 0 开始
       try {
-        const b = await (await fetch(m.url)).blob();
+        const b = await fetchBlobWithProgress(m.url, setFileProgress);
         const name = (m.url.split("/").pop() || "").split("?")[0]; // 去掉 ?sign 查询串，卡片名才干净
         const file = new File([b], name, { type: b.type || (m.type === "image" ? "image/jpeg" : "video/mp4") });
         const before = clips.length;

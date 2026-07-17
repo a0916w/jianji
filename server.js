@@ -15,6 +15,14 @@ const WORK_DIR = process.env.WORK_DIR || (require('os').tmpdir() + '/jianji');
 const DB_PATH = process.env.DB_PATH || path.join(WORK_DIR, 'jobs.sqlite');
 const db = createDb(DB_PATH);
 
+// 报表/列表日期一律用【马来西亚时区 UTC+8，无夏令时】：created_at 存的是 UTC ISO，
+// +8h 后取 UTC 日期即当地日期。否则当地凌晨(00:00~07:59)的任务会被算到前一天。
+function mlyDate(ts) {
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? '' : new Date(d.getTime() + 8 * 3600000).toISOString().slice(0, 10);
+}
+const mlyToday = (offsetDays = 0) => mlyDate(Date.now() - offsetDays * 86400000);
+
 function safeMediaPath(id, file) {
   const base = path.resolve(WORK_DIR, String(id));
   const target = path.resolve(base, file);
@@ -185,7 +193,7 @@ const app = http.createServer(async (req, res) => {
           <td>${badge(j.status)}${j.status === 'failed' && j.error ? `<span class="badge" style="--c:var(--red);cursor:help;margin-left:4px" title="${escapeHtml(decodeU(j.error))}">?</span>` : ''}</td>
           <td class="dim mono">${fmtDur(j.duration)}</td>
           <td class="title" data-title-id="${escapeHtml(j.id)}" data-title="${escapeHtml(j.title || '')}" title="点击修改标题">${title}</td>
-          <td class="dim mono">${escapeHtml((j.created_at || '').slice(0, 10))}</td>
+          <td class="dim mono">${escapeHtml(mlyDate(j.created_at) || '—')}</td>
           <td>${mediaCol}</td>
           <td>${sliceStatus || '<span class="dim">—</span>'}</td>
           <td><div class="actions">${editBtn}<button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${retry}${sliceBtn}${play}${dl}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
@@ -463,7 +471,8 @@ const app = http.createServer(async (req, res) => {
     } else {
       sliceField.hidden = true;
     }
-    modalCreated.textContent = (d.created_at || '—').slice(0, 10); // 只显示日期
+    // 只显示日期，按马来西亚时区(UTC+8)。
+    modalCreated.textContent = d.created_at ? new Date(new Date(d.created_at).getTime() + 8 * 3600000).toISOString().slice(0, 10) : '—';
     // 生成耗时（毫秒 → 人类可读）。
     const rms = d.render_ms;
     let rtxt = '—';
@@ -644,12 +653,12 @@ const app = http.createServer(async (req, res) => {
       let from = (u.searchParams.get('from') || '').trim();
       let to = (u.searchParams.get('to') || '').trim();
       if (!from && !to) {
-        to = new Date().toISOString().slice(0, 10);
-        from = new Date(Date.now() - 89 * 86400000).toISOString().slice(0, 10);
+        to = mlyToday();
+        from = mlyToday(89);
       } else if (!DATE_RE.test(from) || !DATE_RE.test(to) || from > to) {
         return sendJson(res, 400, { error: 'from & to (YYYY-MM-DD) required, from<=to' });
       }
-      const dayOf = (iso) => String(iso || '').slice(0, 10);
+      const dayOf = (iso) => mlyDate(iso);
       const days = new Map();      // date -> { date, total, done, failed, sliced }
       const dayThemes = new Map(); // date||theme -> { date, theme, submitted, sliced, failed }
       for (const j of db.listAll()) {
@@ -698,7 +707,7 @@ const app = http.createServer(async (req, res) => {
       ];
       return sendJson(res, 200, {
         project_code: (u.searchParams.get('project_code') || '').trim(),
-        from, to, timezone: 'UTC', sections,
+        from, to, timezone: 'Asia/Kuala_Lumpur', sections,
       });
     }
 
@@ -710,7 +719,7 @@ const app = http.createServer(async (req, res) => {
         return res.end('forbidden');
       }
       const jobs = db.listAll();
-      const dayOf = (iso) => (String(iso || '').slice(0, 10) || '未知');
+      const dayOf = (iso) => (mlyDate(iso) || '未知');
       const days = new Map();      // 日期 -> { total, submitted, sliced, failed }
       const dayThemes = new Map(); // 日期||主题 -> { date, theme, submitted, sliced, failed }
       for (const j of jobs) {

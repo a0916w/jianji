@@ -81,10 +81,12 @@ const app = http.createServer(async (req, res) => {
       // 筛选：标题(q) / 状态(status) / 创建日期(date, YYYY-MM-DD 前缀匹配)。
       const q = (u.searchParams.get('q') || '').trim().toLowerCase();
       const fstatus = u.searchParams.get('status') || '';
+      const fslice = u.searchParams.get('slice') || ''; // 切片状态筛选：none/slicing/done/failed
       const fdate = (u.searchParams.get('date') || '').trim();
       const filtered = allJobs.filter((j) => {
         if (q && !String(j.title || '').toLowerCase().includes(q)) return false;
         if (fstatus && j.status !== fstatus) return false;
+        if (fslice && (j.slice_status || 'none') !== fslice) return false;
         if (fdate && !String(j.created_at || '').startsWith(fdate)) return false;
         return true;
       });
@@ -171,15 +173,19 @@ const app = http.createServer(async (req, res) => {
         </tr>`;
       }).join('\n');
       const count = total;
-      const hasFilter = !!(q || fstatus || fdate);
+      const hasFilter = !!(q || fstatus || fslice || fdate);
       const STATUSES = ['editing', 'downloading', 'processing', 'rendering', 'done', 'failed'];
       const STATUS_ZH = { editing: '编辑中', downloading: '下载中', processing: '渲染中', rendering: '待渲染', done: '完成', failed: '失败' };
       const statusOpts = ['<option value="">全部状态</option>']
         .concat(STATUSES.map((s) => `<option value="${s}"${fstatus === s ? ' selected' : ''}>${STATUS_ZH[s] || s}</option>`)).join('');
+      const SLICE_FILTER = { none: '未切片', slicing: '切片中', done: '切片提交成功', failed: '切片失败' };
+      const sliceOpts = ['<option value="">全部切片状态</option>']
+        .concat(Object.keys(SLICE_FILTER).map((s) => `<option value="${s}"${fslice === s ? ' selected' : ''}>${SLICE_FILTER[s]}</option>`)).join('');
       const filterForm = `<form method="get" action="/jobs" class="filters">
         <input type="hidden" name="token" value="${escapeHtml(token)}">
         <input type="text" name="q" value="${escapeHtml(u.searchParams.get('q') || '')}" placeholder="搜索标题">
         <select name="status">${statusOpts}</select>
+        <select name="slice">${sliceOpts}</select>
         <input type="date" name="date" value="${escapeHtml(fdate)}">
         <button type="submit" class="btn btn-primary">筛选</button>
         <a class="btn btn-info" href="/jobs?token=${encodeURIComponent(token)}">重置</a>
@@ -188,6 +194,7 @@ const app = http.createServer(async (req, res) => {
         const sp = new URLSearchParams({ token });
         if (q) sp.set('q', u.searchParams.get('q'));
         if (fstatus) sp.set('status', fstatus);
+        if (fslice) sp.set('slice', fslice);
         if (fdate) sp.set('date', fdate);
         sp.set('page', String(pp));
         return '/jobs?' + sp.toString();

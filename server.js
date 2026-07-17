@@ -143,16 +143,16 @@ const app = http.createServer(async (req, res) => {
         const dl = j.status === 'done'
           ? `<a class="btn btn-dl" href="/media/${encodeURIComponent(j.id)}/out.mp4?sign=${sign(j.id)}" download="out-${encodeURIComponent(j.id)}.mp4">下载</a>`
           : '';
-        // 切片：状态徽章(切片列) 与 操作按钮(操作列) 分开——切片列只显状态，切/重试按钮都进操作列。
-        let sliceStatus = '', sliceBtn = '';
+        // 切片列只放状态(徽章 / 未切时的「切片」按钮)；只有「重试切片」这个重试按钮进操作列。
+        let sliceStatus = '', sliceRetryBtn = '';
         if (sliceCfg.enabled && j.status === 'done') {
           if (j.slice_status === 'done') sliceStatus = `<span class="badge" style="--c:var(--green)" title="video_id=${escapeHtml(j.slice_video_id || '')}">已切片</span>`;
           else if (j.slice_status === 'slicing') sliceStatus = `<span class="badge" style="--c:var(--accent)">切片中</span>`;
           else if (j.slice_status === 'failed') {
             sliceStatus = `<span class="badge" style="--c:var(--red);cursor:help" title="${escapeHtml(decodeU(j.slice_error) || '未知错误')}">切片失败</span>`;
-            sliceBtn = `<button class="btn btn-slice" data-slice="${escapeHtml(j.id)}" title="${escapeHtml(decodeU(j.slice_error))}">重试切片</button>`;
+            sliceRetryBtn = `<button class="btn btn-slice" data-slice="${escapeHtml(j.id)}" title="${escapeHtml(decodeU(j.slice_error))}">重试切片</button>`;
           } else {
-            sliceBtn = `<button class="btn btn-slice" data-slice="${escapeHtml(j.id)}">切片</button>`;
+            sliceStatus = `<button class="btn btn-slice" data-slice="${escapeHtml(j.id)}">切片</button>`;
           }
         }
         // 失败任务：直接重跑渲染（重回 rendering 队列，worker 会兜底转 H.264 再渲染）。
@@ -167,7 +167,7 @@ const app = http.createServer(async (req, res) => {
           <td class="title" data-title-id="${escapeHtml(j.id)}" data-title="${escapeHtml(j.title || '')}" title="点击修改标题">${title}</td>
           <td class="dim mono">${escapeHtml((j.created_at || '').slice(0, 10))}</td>
           <td>${sliceStatus || '<span class="dim">—</span>'}</td>
-          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${retry}${sliceBtn}${play}${dl}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
+          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${retry}${sliceRetryBtn}${play}${dl}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
         </tr>`;
       }).join('\n');
       const count = total;

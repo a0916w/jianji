@@ -1065,6 +1065,35 @@ async function askSlice() {
   });
 }
 
+/* 单个素材上传，带自动重试：网络中断(Failed to fetch)或服务端 5xx 会退避重试;
+   4xx(文件太大/类型不支持/签名/任务不存在)是永久错误，直接抛不重试。默认最多 3 次。 */
+async function uploadOneWithRetry(id, sign, file, onRetry) {
+  const url = `/api/web-upload?job=${encodeURIComponent(id)}&sign=${encodeURIComponent(sign)}&name=${encodeURIComponent(file.name)}`;
+  const MAX = 3;
+  for (let a = 1; a <= MAX; a++) {
+    let ur;
+    try {
+      ur = await fetch(url, { method: "POST", body: file });
+    } catch (e) {
+      // 网络层失败(断连/Failed to fetch)→ 可重试
+      if (a === MAX) throw new Error(`上传失败(网络中断，已重试 ${MAX} 次)：${file.name}`);
+      onRetry && onRetry(a, MAX - 1);
+      await new Promise((r) => setTimeout(r, 1000 * a)); // 1s / 2s 退避
+      continue;
+    }
+    if (ur.ok) return;
+    const ed = await ur.json().catch(() => ({}));
+    // 4xx = 永久错误，重试也没用 → 直接抛
+    if (ur.status >= 400 && ur.status < 500) {
+      throw new Error(ed.error || `上传失败：${file.name}`);
+    }
+    // 5xx = 服务端临时错误 → 可重试
+    if (a === MAX) throw new Error(ed.error || `上传失败(服务端 ${ur.status}，已重试 ${MAX} 次)：${file.name}`);
+    onRetry && onRetry(a, MAX - 1);
+    await new Promise((r) => setTimeout(r, 1000 * a));
+  }
+}
+
 /* ---------------- 生成到服务器：上传原始素材，由后端 ffmpeg 渲染 ---------------- */
 $("serverBtn").addEventListener("click", async () => {
   if (exporting || !clips.length) return;
@@ -1084,14 +1113,11 @@ $("serverBtn").addEventListener("click", async () => {
     const { id, sign } = jd;
 
     for (let i = 0; i < clips.length; i++) {
-      setStatus(`正在上传 ${i + 1}/${clips.length}：${clips[i].file.name}`);
-      const ur = await fetch(`/api/web-upload?job=${encodeURIComponent(id)}&sign=${encodeURIComponent(sign)}&name=${encodeURIComponent(clips[i].file.name)}`, {
-        method: "POST", body: clips[i].file,
+      const nm = clips[i].file.name;
+      setStatus(`正在上传 ${i + 1}/${clips.length}：${nm}`);
+      await uploadOneWithRetry(id, sign, clips[i].file, (attempt, max) => {
+        setStatus(`上传重试 ${attempt}/${max} · ${i + 1}/${clips.length}：${nm}…`);
       });
-      if (!ur.ok) {
-        const ed = await ur.json().catch(() => ({}));
-        throw new Error(ed.error || `上传失败：${clips[i].file.name}`);
-      }
     }
 
     setStatus("正在提交渲染任务…");

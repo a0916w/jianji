@@ -219,7 +219,7 @@ const app = http.createServer(async (req, res) => {
   tbody tr:hover{background:var(--panel-2)}
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
   .dim{color:var(--text-dim)}
-  .title{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .title{max-width:280px;white-space:normal;word-break:break-word}
   .badge{display:inline-block;padding:3px 11px;border-radius:20px;font-size:12px;font-weight:600;color:var(--c);background:color-mix(in srgb,var(--c) 16%,transparent);border:1px solid color-mix(in srgb,var(--c) 38%,transparent)}
   .src{font-size:12px;padding:2px 9px;border-radius:6px;background:var(--panel-2);border:1px solid var(--border);color:var(--text-dim)}
   .actions{display:flex;gap:8px}
@@ -279,8 +279,7 @@ const app = http.createServer(async (req, res) => {
     <div class="modal-field" id="modalPlayerField" hidden><div class="modal-label">在线播放</div><video id="modalVideo" class="modal-video" controls preload="metadata" playsinline></video></div>
     <div class="modal-field"><div class="modal-label">状态 / 模式 / 来源</div><div class="modal-value" id="modalMeta"></div></div>
     <div class="modal-field"><div class="modal-label">创建时间</div><div class="modal-value" id="modalCreated"></div></div>
-    <div class="modal-field"><div class="modal-label">描述</div><div class="modal-value" id="modalDesc"></div></div>
-    <div class="modal-field"><div class="modal-label">标签</div><div class="modal-tags" id="modalTags"></div></div>
+    <div class="modal-field"><div class="modal-label">明顺切片主题</div><div class="modal-value" id="modalTheme"></div></div>
     <div class="modal-field" id="modalRenderField" hidden><div class="modal-label">渲染错误（失败原因）</div><div class="modal-value" id="modalRenderErr" style="color:var(--red)"></div></div>
     <div class="modal-field" id="modalSliceField" hidden><div class="modal-label">切片错误（失败原因）</div><div class="modal-value" id="modalSliceErr" style="color:var(--red)"></div></div>
     <div class="modal-actions"><a class="btn btn-dl" id="modalDl" href="#">下载成品</a></div>
@@ -376,8 +375,7 @@ const app = http.createServer(async (req, res) => {
   const modalTitle = document.getElementById('modalTitle');
   const modalMeta = document.getElementById('modalMeta');
   const modalCreated = document.getElementById('modalCreated');
-  const modalDesc = document.getElementById('modalDesc');
-  const modalTags = document.getElementById('modalTags');
+  const modalTheme = document.getElementById('modalTheme');
   const modalDl = document.getElementById('modalDl');
   const modalVideo = document.getElementById('modalVideo');
   const modalPlayerField = document.getElementById('modalPlayerField');
@@ -395,7 +393,8 @@ const app = http.createServer(async (req, res) => {
     modalTitleMsg.textContent = '';
     modalTitleMsg.style.color = 'var(--text-dim)';
     modalTitleSave.disabled = false;
-    modalMeta.textContent = (d.status || '—') + ' / ' + (d.mode || '—') + ' / ' + (d.source || '—');
+    const STATUS_ZH = { rendering: '待渲染', processing: '渲染中', done: '完成', failed: '失败', slicing: '切片中' };
+    modalMeta.textContent = (STATUS_ZH[d.status] || d.status || '—') + ' / ' + (d.mode || '—') + ' / ' + (d.source || '—');
     // 渲染失败时显示错误原因（之前 error 存了 DB 但界面没露出来）。
     const renderField = document.getElementById('modalRenderField');
     if (d.status === 'failed' && d.error) {
@@ -412,15 +411,8 @@ const app = http.createServer(async (req, res) => {
     } else {
       sliceField.hidden = true;
     }
-    modalCreated.textContent = d.created_at || '—';
-    modalDesc.textContent = d.description || '（无描述）';
-    modalTags.replaceChildren();
-    (d.tags || []).forEach((t) => {
-      const span = document.createElement('span');
-      span.className = 'src';
-      span.textContent = t;
-      modalTags.appendChild(span);
-    });
+    modalCreated.textContent = (d.created_at || '—').slice(0, 10); // 只显示日期
+    modalTheme.textContent = d.slice_theme || '（未选主题）';
     if (d.dl) {
       modalDl.href = d.dl;
       modalDl.setAttribute('download', 'out-' + id + '.mp4');

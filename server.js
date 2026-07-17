@@ -278,7 +278,7 @@ const app = http.createServer(async (req, res) => {
     <div class="modal-field">
       <div class="modal-label">标题（可修改）</div>
       <div style="display:flex;gap:8px;align-items:center">
-        <input type="text" id="modalTitleInput" maxlength="200" class="slice-select" style="margin-top:0;flex:1" placeholder="成片标题">
+        <input type="text" id="modalTitleInput" class="slice-select" style="margin-top:0;flex:1" placeholder="成片标题">
         <button type="button" class="btn btn-primary" id="modalTitleSave" style="padding:9px 16px">保存</button>
       </div>
       <div id="modalTitleMsg" style="font-size:12px;margin-top:6px;min-height:14px;color:var(--text-dim)"></div>
@@ -326,7 +326,7 @@ const app = http.createServer(async (req, res) => {
     const id = cell.dataset.titleId;
     const cur = cell.dataset.title || '';
     const input = document.createElement('input');
-    input.type = 'text'; input.value = cur; input.maxLength = 200; input.className = 'title-edit';
+    input.type = 'text'; input.value = cur; input.className = 'title-edit';
     cell.textContent = '';
     cell.appendChild(input);
     input.focus(); input.select();
@@ -943,7 +943,7 @@ const app = http.createServer(async (req, res) => {
         res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
         return res.end(JSON.stringify({ error: '任务不存在' }));
       }
-      const title = typeof body.title === 'string' ? body.title.trim().slice(0, 200) : '';
+      const title = typeof body.title === 'string' ? body.title.trim() : ''; // 标题不限长度
       db.update(id, { title });
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Referrer-Policy': 'no-referrer' });
       return res.end(JSON.stringify({ ok: true, title }));

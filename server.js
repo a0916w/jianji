@@ -571,17 +571,17 @@ const app = http.createServer(async (req, res) => {
   sliceGo.addEventListener('click', async () => {
     if (!sliceId) return;
     try { localStorage.setItem('jianji_last_slice_theme', sliceTheme.value); } catch (_) {}
-    sliceGo.disabled = true; sliceGo.textContent = '切片中…';
-    sliceMsg.style.color = 'var(--text-dim)'; sliceMsg.textContent = '正在上传成片到明顺并触发切片，请稍候…';
+    sliceGo.disabled = true; sliceGo.textContent = '提交中…';
+    sliceMsg.style.color = 'var(--text-dim)'; sliceMsg.textContent = '正在提交后台切片…';
     try {
       const r = await fetch('/api/slice?token=' + encodeURIComponent(TOKEN), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: sliceId, theme: sliceTheme.value }),
       });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok || !d.ok) throw new Error(d.error || '切片失败');
+      if (!r.ok || !d.ok) throw new Error(d.error || '提交失败');
       sliceMsg.style.color = 'var(--green)';
-      sliceMsg.textContent = '✅ 已提交明顺切片' + (d.video_id != null ? '（video_id=' + d.video_id + '）' : '');
+      sliceMsg.textContent = '✅ 已提交后台切片，稍后刷新查看结果（列表会显示切片中→已切片/切片失败）';
       setTimeout(() => location.reload(), 1200);
     } catch (err) {
       sliceMsg.style.color = 'var(--red)';
@@ -993,16 +993,22 @@ const app = http.createServer(async (req, res) => {
       if (dir === base || !dir.startsWith(base + path.sep) || path.dirname(dir) !== base) return sendJson(res, 400, { error: '非法路径' });
       const outPath = path.join(dir, 'out.mp4');
       if (!fs.existsSync(outPath)) return sendJson(res, 404, { error: '成片文件不存在' });
-      try {
-        db.update(id, { slice_status: 'slicing', slice_theme: theme, slice_error: null });
-        const r = await mingshun.sliceVideo(outPath, { title: job.title || '', description: job.description || '', theme });
-        db.update(id, { slice_status: 'done', slice_video_id: r.video_id != null ? String(r.video_id) : null });
-        return sendJson(res, 200, { ok: true, video_id: r.video_id });
-      } catch (e) {
-        const msg = String((e && e.message) || e).slice(0, 300);
-        try { db.update(id, { slice_status: 'failed', slice_error: msg }); } catch (_) {}
-        return sendJson(res, 500, { error: '切片失败: ' + msg });
-      }
+      if (job.slice_status === 'slicing') return sendJson(res, 409, { error: '正在切片中，请稍候' });
+      // 后台切片：立刻标记 slicing 并返回，实际 sliceVideo 不阻塞请求（切明顺可能较慢）。
+      // 完成/失败后台更新状态，前端刷新即可看到「已切片 / 切片失败」。
+      db.update(id, { slice_status: 'slicing', slice_theme: theme, slice_error: null });
+      (async () => {
+        try {
+          const r = await mingshun.sliceVideo(outPath, { title: job.title || '', description: job.description || '', theme });
+          db.update(id, { slice_status: 'done', slice_video_id: r.video_id != null ? String(r.video_id) : null });
+          console.log('[slice] 后台切片成功', id, 'theme=', theme, 'video_id=', r.video_id);
+        } catch (e) {
+          const msg = String((e && e.message) || e).slice(0, 300);
+          try { db.update(id, { slice_status: 'failed', slice_error: msg }); } catch (_) {}
+          console.error('[slice] 后台切片失败', id, msg);
+        }
+      })();
+      return sendJson(res, 200, { ok: true, background: true });
     }
 
     // 只改明顺切片主题（不立刻切片）——渲染完成后 worker 会按这个主题自动切片；

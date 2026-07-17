@@ -136,7 +136,42 @@ function startWorker({ db, workDir }) {
   };
 
   tick();
-  return { stop() { stopped = true; if (timer) clearTimeout(timer); } };
+
+  // 定时清理：删掉 PRUNE_DAYS(默认7) 天前【终态任务】的源素材文件，释放磁盘。
+  // 保留 out.mp4(成片,可下载/重切) 和任务记录；只删源素材(几百MB~GB级，占空间大头)。
+  // 清完的老任务若再点「重试渲染」会因源文件缺失而失败(显示友好提示)，符合预期。
+  function pruneOldMedia() {
+    try {
+      const days = parseInt(process.env.PRUNE_DAYS || '7', 10);
+      const cutoff = Date.now() - days * 86400000;
+      const baseResolved = path.resolve(workDir);
+      let files = 0, bytes = 0;
+      for (const j of db.listAll()) {
+        const t = j.created_at ? Date.parse(j.created_at) : NaN;
+        if (!(t < cutoff)) continue;                                // 不到天数 / 无时间
+        if (j.status !== 'done' && j.status !== 'failed') continue; // 只清终态，别动进行中的
+        const dir = path.resolve(workDir, String(j.id));
+        if (path.dirname(dir) !== baseResolved) continue;           // 防路径穿越
+        let list;
+        try { list = fs.readdirSync(dir); } catch { continue; }
+        for (const f of list) {
+          if (f === 'out.mp4') continue;                            // 保留成片
+          try {
+            const fp = path.join(dir, f);
+            const st = fs.statSync(fp);
+            if (st.isFile()) { fs.unlinkSync(fp); files++; bytes += st.size; }
+          } catch { /* 单文件删失败跳过 */ }
+        }
+      }
+      if (files) console.log(`[worker] 清理 ${days} 天前素材：删 ${files} 个文件，约 ${Math.round(bytes / 1048576)} MB`);
+    } catch (e) {
+      console.error('[worker] 素材清理失败', (e && e.message) || e);
+    }
+  }
+  pruneOldMedia();                                                  // 启动先清一次
+  const pruneTimer = setInterval(pruneOldMedia, 6 * 3600 * 1000);   // 之后每 6 小时清一次
+
+  return { stop() { stopped = true; if (timer) clearTimeout(timer); if (pruneTimer) clearInterval(pruneTimer); } };
 }
 
 // 若任务在提交时选了切片主题（slice_theme），渲染完成后把成片发明顺切片。

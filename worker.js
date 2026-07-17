@@ -46,6 +46,21 @@ function startWorker({ db, workDir }) {
     console.error('[worker] 切片孤儿重置失败', (e && e.message) || e);
   }
 
+  // 历史失败任务里「源文件缺失」的错误之前存的是一大坨 ffmpeg 命令，启动时统一改写成
+  // 友好提示（新失败已在渲染 catch 里处理，这里补历史数据，省得逐个重试渲染）。
+  try {
+    const bad = db._db.prepare(
+      "SELECT id FROM jobs WHERE status='failed' AND error IS NOT NULL AND (error LIKE '%No such file or directory%' OR error LIKE '%Error opening input%')"
+    ).all();
+    if (bad.length) {
+      const friendly = '视频/图片不存在服务器（源素材已被删除或未成功下载，请重新上传/重发素材后再试）';
+      bad.forEach((r) => db.update(r.id, { error: friendly }));
+      console.log(`[worker] 启动时改写 ${bad.length} 个源文件缺失的历史错误为友好提示`);
+    }
+  } catch (e) {
+    console.error('[worker] 历史错误改写失败', (e && e.message) || e);
+  }
+
   // M1：claim + 渲染整体包一层 try/catch，任何抛出都被吞掉记录日志，
   // 保证 finally 里的重新调度一定执行，循环不会因为一次异常永久停摆。
   const tick = async () => {

@@ -139,12 +139,30 @@ const app = http.createServer(async (req, res) => {
       };
       const rows = jobs.map((j) => {
         const editUrl = `/edit?job=${encodeURIComponent(j.id)}&sign=${sign(j.id)}`;
-        const play = j.status === 'done'
-          ? `<button class="btn btn-play" data-play="${escapeHtml(j.id)}">播放</button>`
-          : '';
-        const dl = j.status === 'done'
-          ? `<a class="btn btn-dl" href="/media/${encodeURIComponent(j.id)}/out.mp4?sign=${sign(j.id)}" download="out-${encodeURIComponent(j.id)}.mp4">下载</a>`
-          : '';
+        // 先查素材/成片文件是否还在（同时决定按钮显隐 + 素材列）。
+        // 素材：逐个查 job 真正要用的媒体文件(m.path，就是 ffmpeg -i 的路径)——某个具体文件缺失/
+        // 文件名不符时不会误显示「在」。成片：查 out.mp4 是否存在。
+        const mediaList = Array.isArray(j.media) ? j.media : [];
+        let missing = 0;
+        for (const m of mediaList) { try { if (!m || !m.path || !fs.existsSync(m.path)) missing++; } catch { missing++; } }
+        const mediaAllMissing = mediaList.length > 0 && missing >= mediaList.length;
+        let outExists = false;
+        try { outExists = fs.existsSync(path.join(WORK_DIR, String(j.id), 'out.mp4')); } catch { /* ignore */ }
+
+        let mediaCol;
+        if (!mediaList.length) mediaCol = '<span class="dim">—</span>';
+        else if (missing === 0) mediaCol = '<span class="badge" style="--c:var(--green)">在</span>';
+        else if (mediaAllMissing) mediaCol = '<span class="badge" style="--c:var(--text-dim)" title="源素材不在服务器（被清理或文件名不符），ffmpeg 打不开">已删除</span>';
+        else mediaCol = `<span class="badge" style="--c:var(--red);cursor:help" title="部分源素材缺失，ffmpeg 会失败">缺 ${missing}/${mediaList.length}</span>`;
+
+        // 播放/下载：成片存在才显示（out.mp4 被清理后就没了）。
+        const play = (j.status === 'done' && outExists)
+          ? `<button class="btn btn-play" data-play="${escapeHtml(j.id)}">播放</button>` : '';
+        const dl = (j.status === 'done' && outExists)
+          ? `<a class="btn btn-dl" href="/media/${encodeURIComponent(j.id)}/out.mp4?sign=${sign(j.id)}" download="out-${encodeURIComponent(j.id)}.mp4">下载</a>` : '';
+        // 剪辑：源素材全没了就没法编辑，隐藏剪辑按钮。
+        const editBtn = mediaAllMissing ? '' : `<a class="btn btn-edit" href="${editUrl}">剪辑</a>`;
+
         // 切片列只放状态徽章；「切片」「重试切片」按钮都进操作列。
         let sliceStatus = '', sliceBtn = '';
         if (sliceCfg.enabled && j.status === 'done') {
@@ -162,19 +180,6 @@ const app = http.createServer(async (req, res) => {
           ? `<button class="btn btn-retry" data-retry="${escapeHtml(j.id)}">重试渲染</button>`
           : '';
         const title = j.title ? escapeHtml(j.title) : '<span class="dim">—</span>';
-        // 素材是否还在服务器：逐个查 job 真正要用的媒体文件(m.path，就是 ffmpeg -i 的路径)，
-        // 而不是笼统看目录里有没有文件——那样某个具体文件缺失/文件名不符时会误显示「在」但 ffmpeg 打不开。
-        let mediaCol;
-        const mediaList = Array.isArray(j.media) ? j.media : [];
-        if (!mediaList.length) {
-          mediaCol = '<span class="dim">—</span>';
-        } else {
-          let missing = 0;
-          for (const m of mediaList) { try { if (!m || !m.path || !fs.existsSync(m.path)) missing++; } catch { missing++; } }
-          if (missing === 0) mediaCol = '<span class="badge" style="--c:var(--green)">在</span>';
-          else if (missing >= mediaList.length) mediaCol = '<span class="badge" style="--c:var(--text-dim)" title="源素材不在服务器（被清理或文件名不符），ffmpeg 打不开">已删除</span>';
-          else mediaCol = `<span class="badge" style="--c:var(--red);cursor:help" title="部分源素材缺失，ffmpeg 会失败">缺 ${missing}/${mediaList.length}</span>`;
-        }
         return `<tr>
           <td class="mono">${escapeHtml(j.id)}</td>
           <td>${badge(j.status)}${j.status === 'failed' && j.error ? `<span class="badge" style="--c:var(--red);cursor:help;margin-left:4px" title="${escapeHtml(decodeU(j.error))}">?</span>` : ''}</td>
@@ -183,7 +188,7 @@ const app = http.createServer(async (req, res) => {
           <td class="dim mono">${escapeHtml((j.created_at || '').slice(0, 10))}</td>
           <td>${mediaCol}</td>
           <td>${sliceStatus || '<span class="dim">—</span>'}</td>
-          <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${retry}${sliceBtn}${play}${dl}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
+          <td><div class="actions">${editBtn}<button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${retry}${sliceBtn}${play}${dl}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
         </tr>`;
       }).join('\n');
       const count = total;

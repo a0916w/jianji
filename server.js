@@ -146,7 +146,7 @@ const app = http.createServer(async (req, res) => {
         // 切片列只放状态(徽章 / 未切时的「切片」按钮)；只有「重试切片」这个重试按钮进操作列。
         let sliceStatus = '', sliceRetryBtn = '';
         if (sliceCfg.enabled && j.status === 'done') {
-          if (j.slice_status === 'done') sliceStatus = `<span class="badge" style="--c:var(--green)" title="已提交到明顺，明顺侧切片/转码可能仍在进行 · video_id=${escapeHtml(j.slice_video_id || '')}">已提交切片</span>`;
+          if (j.slice_status === 'done') sliceStatus = `<span class="badge" style="--c:var(--green)" title="已提交到明顺，明顺侧切片/转码可能仍在进行 · video_id=${escapeHtml(j.slice_video_id || '')}">切片提交成功</span>`;
           else if (j.slice_status === 'slicing') sliceStatus = `<span class="badge" style="--c:var(--accent)">切片中</span>`;
           else if (j.slice_status === 'failed') {
             sliceStatus = `<span class="badge" style="--c:var(--red);cursor:help" title="${escapeHtml(decodeU(j.slice_error) || '未知错误')}">切片失败</span>`;
@@ -421,7 +421,7 @@ const app = http.createServer(async (req, res) => {
       renderField.hidden = true;
     }
     // 切片状态（中文）+ 已切片时带 video_id。
-    const SLICE_ZH = { slicing: '切片中', done: '已提交切片（明顺侧可能仍在处理）', failed: '切片失败' };
+    const SLICE_ZH = { slicing: '切片中', done: '切片提交成功（明顺侧可能仍在处理）', failed: '切片失败' };
     document.getElementById('modalSliceStatus').textContent = SLICE_ZH[d.slice_status] || '未切片';
     document.getElementById('modalVideoId').textContent = d.slice_video_id || '—';
     // 切片失败时显示错误原因，让操作员看清为什么，别盲目重试。

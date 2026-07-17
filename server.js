@@ -160,7 +160,6 @@ const app = http.createServer(async (req, res) => {
           <td>${badge(j.status)}${j.status === 'failed' && j.error ? `<span class="badge" style="--c:var(--red);cursor:help;margin-left:4px" title="${escapeHtml(decodeU(j.error))}">?</span>` : ''}</td>
           <td class="dim mono">${fmtDur(j.duration)}</td>
           <td class="title" data-title-id="${escapeHtml(j.id)}" data-title="${escapeHtml(j.title || '')}" title="点击修改标题">${title}</td>
-          <td class="dim mono">${escapeHtml((j.created_at || '').slice(0, 10))}</td>
           <td>${slice || '<span class="dim">—</span>'}</td>
           <td><div class="actions"><a class="btn btn-edit" href="${editUrl}">剪辑</a><button class="btn btn-info" data-id="${escapeHtml(j.id)}">详情</button>${retry}${play}${dl}<button class="btn btn-del" data-id="${escapeHtml(j.id)}">删除</button></div></td>
         </tr>`;
@@ -192,7 +191,7 @@ const app = http.createServer(async (req, res) => {
         ${page < pages ? `<a class="btn btn-info" href="${mkPageUrl(page + 1)}">下一页 →</a>` : ''}
       </div>` : '';
       const table = count ? `<div class="card"><table>
-      <thead><tr><th>编号</th><th>状态</th><th>时长</th><th>标题</th><th>创建时间</th><th>切片</th><th>操作</th></tr></thead>
+      <thead><tr><th>编号</th><th>状态</th><th>时长</th><th>标题</th><th>切片</th><th>操作</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`
         : `<div class="card"><div class="empty">${hasFilter ? '没有符合条件的任务' : '还没有任务 🎬'}<br><span class="dim">${hasFilter ? '换个筛选条件试试' : 'Telegram 群发相册,或直接开网页上传后点「生成到服务器」'}</span></div></div>`;
       const body = filterForm + table + pager;

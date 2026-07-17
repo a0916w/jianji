@@ -162,15 +162,18 @@ const app = http.createServer(async (req, res) => {
           ? `<button class="btn btn-retry" data-retry="${escapeHtml(j.id)}">重试渲染</button>`
           : '';
         const title = j.title ? escapeHtml(j.title) : '<span class="dim">—</span>';
-        // 素材是否还在服务器（定时清理会删7天前源素材，只保留 out.mp4）。
+        // 素材是否还在服务器：逐个查 job 真正要用的媒体文件(m.path，就是 ffmpeg -i 的路径)，
+        // 而不是笼统看目录里有没有文件——那样某个具体文件缺失/文件名不符时会误显示「在」但 ffmpeg 打不开。
         let mediaCol;
-        try {
-          const fl = fs.readdirSync(path.join(WORK_DIR, String(j.id)));
-          mediaCol = fl.some((f) => f !== 'out.mp4')
-            ? '<span class="badge" style="--c:var(--green)">在</span>'
-            : '<span class="badge" style="--c:var(--text-dim)" title="源素材已被清理，成片仍在">已删除</span>';
-        } catch {
-          mediaCol = '<span class="badge" style="--c:var(--text-dim)" title="源素材已被清理">已删除</span>';
+        const mediaList = Array.isArray(j.media) ? j.media : [];
+        if (!mediaList.length) {
+          mediaCol = '<span class="dim">—</span>';
+        } else {
+          let missing = 0;
+          for (const m of mediaList) { try { if (!m || !m.path || !fs.existsSync(m.path)) missing++; } catch { missing++; } }
+          if (missing === 0) mediaCol = '<span class="badge" style="--c:var(--green)">在</span>';
+          else if (missing >= mediaList.length) mediaCol = '<span class="badge" style="--c:var(--text-dim)" title="源素材不在服务器（被清理或文件名不符），ffmpeg 打不开">已删除</span>';
+          else mediaCol = `<span class="badge" style="--c:var(--red);cursor:help" title="部分源素材缺失，ffmpeg 会失败">缺 ${missing}/${mediaList.length}</span>`;
         }
         return `<tr>
           <td class="mono">${escapeHtml(j.id)}</td>

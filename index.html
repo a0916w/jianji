@@ -272,6 +272,13 @@
     <span id="status"></span>
   </div>
 
+  <div id="uploadBar" style="display:none;margin:6px 0 10px;">
+    <div style="height:8px;width:100%;background:var(--panel-2,#242026);border-radius:6px;overflow:hidden;">
+      <div id="uploadBarFill" style="height:100%;width:0;background:var(--green,#2ecc8f);transition:width .15s"></div>
+    </div>
+    <div id="uploadBarText" style="font-size:12px;color:var(--muted,#95887c);margin-top:4px;"></div>
+  </div>
+
   <div class="preview-panel">
     <div class="canvas-box"><canvas id="canvas" width="1280" height="720"></canvas></div>
     <div class="player-bar">
@@ -299,6 +306,15 @@ const canvas = $("canvas"), cx = canvas.getContext("2d");
 const statusEl = $("status");
 
 function setStatus(t) { statusEl.textContent = t; }
+function setUploadProgress(frac, text) {
+  const f = Math.max(0, Math.min(1, frac || 0));
+  const fill = document.getElementById("uploadBarFill");
+  const t = document.getElementById("uploadBarText");
+  if (fill) fill.style.width = Math.round(f * 100) + "%";
+  if (t) t.textContent = `${text} · ${Math.round(f * 100)}%`;
+}
+function showUploadBar() { const b = document.getElementById("uploadBar"); if (b) b.style.display = "block"; setUploadProgress(0, "准备上传"); }
+function hideUploadBar() { const b = document.getElementById("uploadBar"); if (b) b.style.display = "none"; }
 function fmt(s) {
   s = Math.max(0, s);
   const m = Math.floor(s / 60), sec = Math.floor(s % 60);
@@ -1067,31 +1083,43 @@ async function askSlice() {
 
 /* 单个素材上传，带自动重试：网络中断(Failed to fetch)或服务端 5xx 会退避重试;
    4xx(文件太大/类型不支持/签名/任务不存在)是永久错误，直接抛不重试。默认最多 3 次。 */
-async function uploadOneWithRetry(id, sign, file, onRetry) {
-  const url = `/api/web-upload?job=${encodeURIComponent(id)}&sign=${encodeURIComponent(sign)}&name=${encodeURIComponent(file.name)}`;
+/* 单个素材【分片上传】(8MB/片)+ 每片自动重试。onProgress(frac 0~1) 报本文件进度。
+   分片小 → 某片断连只重传那一片、抗网络抖动;全部传完调 /api/web-upload-complete 合并。
+   4xx(类型不支持/签名/任务不存在)是永久错误不重试;网络断/5xx 退避重试(每片最多 3 次)。 */
+async function uploadOneWithRetry(id, sign, file, onProgress) {
+  const CHUNK = 8 * 1024 * 1024;
+  const total = Math.max(1, Math.ceil(file.size / CHUNK));
+  const q = `job=${encodeURIComponent(id)}&sign=${encodeURIComponent(sign)}&name=${encodeURIComponent(file.name)}`;
   const MAX = 3;
-  for (let a = 1; a <= MAX; a++) {
-    let ur;
-    try {
-      ur = await fetch(url, { method: "POST", body: file });
-    } catch (e) {
-      // 网络层失败(断连/Failed to fetch)→ 可重试
-      if (a === MAX) throw new Error(`上传失败(网络中断，已重试 ${MAX} 次)：${file.name}`);
-      onRetry && onRetry(a, MAX - 1);
-      await new Promise((r) => setTimeout(r, 1000 * a)); // 1s / 2s 退避
-      continue;
+
+  for (let i = 0; i < total; i++) {
+    const blob = file.slice(i * CHUNK, Math.min(file.size, (i + 1) * CHUNK));
+    let ok = false, lastErr = null;
+    for (let a = 1; a <= MAX; a++) {
+      try {
+        const r = await fetch(`/api/web-upload?${q}&index=${i}&total=${total}`, { method: "POST", body: blob });
+        if (r.ok) { ok = true; break; }
+        const ed = await r.json().catch(() => ({}));
+        if (r.status >= 400 && r.status < 500) {
+          throw Object.assign(new Error(ed.error || `上传失败：${file.name}`), { __perm: true });
+        }
+        lastErr = new Error(ed.error || `上传失败(服务端 ${r.status})：${file.name}`);
+      } catch (e) {
+        if (e.__perm) throw e;                                  // 永久错误直接抛
+        lastErr = (e instanceof Error) ? e : new Error(`上传失败(网络中断)：${file.name}`);
+      }
+      if (a < MAX) await new Promise((r) => setTimeout(r, 1000 * a)); // 退避后重试
     }
-    if (ur.ok) return;
-    const ed = await ur.json().catch(() => ({}));
-    // 4xx = 永久错误，重试也没用 → 直接抛
-    if (ur.status >= 400 && ur.status < 500) {
-      throw new Error(ed.error || `上传失败：${file.name}`);
-    }
-    // 5xx = 服务端临时错误 → 可重试
-    if (a === MAX) throw new Error(ed.error || `上传失败(服务端 ${ur.status}，已重试 ${MAX} 次)：${file.name}`);
-    onRetry && onRetry(a, MAX - 1);
-    await new Promise((r) => setTimeout(r, 1000 * a));
+    if (!ok) throw lastErr || new Error(`上传失败：${file.name}`);
+    onProgress && onProgress((i + 1) / total);
   }
+
+  const cr = await fetch(`/api/web-upload-complete?${q}&total=${total}`, { method: "POST" });
+  if (!cr.ok) {
+    const ed = await cr.json().catch(() => ({}));
+    throw new Error(ed.error || `合并失败：${file.name}`);
+  }
+  onProgress && onProgress(1);
 }
 
 /* ---------------- 生成到服务器：上传原始素材，由后端 ffmpeg 渲染 ---------------- */
@@ -1112,13 +1140,15 @@ $("serverBtn").addEventListener("click", async () => {
     if (!jr.ok || !jd.ok) throw new Error(jd.error || "创建任务失败");
     const { id, sign } = jd;
 
+    showUploadBar();
     for (let i = 0; i < clips.length; i++) {
       const nm = clips[i].file.name;
       setStatus(`正在上传 ${i + 1}/${clips.length}：${nm}`);
-      await uploadOneWithRetry(id, sign, clips[i].file, (attempt, max) => {
-        setStatus(`上传重试 ${attempt}/${max} · ${i + 1}/${clips.length}：${nm}…`);
+      await uploadOneWithRetry(id, sign, clips[i].file, (frac) => {
+        setUploadProgress((i + frac) / clips.length, `上传 ${i + 1}/${clips.length}：${nm}`);
       });
     }
+    hideUploadBar();
 
     setStatus("正在提交渲染任务…");
     const edit_spec = {
@@ -1143,6 +1173,7 @@ $("serverBtn").addEventListener("click", async () => {
     alert(e.message || String(e));
     setStatus("⚠ 后台生成失败");
   } finally {
+    hideUploadBar();
     refreshButtons();
   }
 });

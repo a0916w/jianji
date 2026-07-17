@@ -78,9 +78,12 @@ async function main() {
     { path: vidPath, name: 'b.mp4' },
   ];
   for (const f of files) {
-    const ur = await postRawFile(`/api/web-upload?job=${id}&sign=${sig}&name=${encodeURIComponent(f.name)}`, f.path);
-    assert.strictEqual(ur.status, 200, `上传 ${f.name} 应成功: ` + ur.body);
-    const ud = JSON.parse(ur.body);
+    // 分片上传(小文件=单片 index0/total1)→ 再 complete 合并
+    const ur = await postRawFile(`/api/web-upload?job=${id}&sign=${sig}&name=${encodeURIComponent(f.name)}&index=0&total=1`, f.path);
+    assert.strictEqual(ur.status, 200, `上传分片 ${f.name} 应成功: ` + ur.body);
+    const cr = await post(`/api/web-upload-complete?job=${id}&sign=${sig}&name=${encodeURIComponent(f.name)}&total=1`, {});
+    assert.strictEqual(cr.status, 200, `合并 ${f.name} 应成功: ` + cr.body);
+    const ud = JSON.parse(cr.body);
     assert.strictEqual(ud.ok, true);
     assert.strictEqual(ud.name, f.name);
   }

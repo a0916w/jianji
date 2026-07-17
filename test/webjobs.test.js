@@ -61,18 +61,20 @@ function postRaw(p, buf) { return new Promise((res) => { const r = http.request(
 
   // 极简 1x1 jpg 字节（不需要真的合法可解码，只测存盘+入库）
   const fakeJpg = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x01, 0x02, 0x03]);
-  const up = await postRaw(`/api/web-upload?job=${wjId}&sign=${wjSign}&name=a.jpg`, fakeJpg);
+  // 分片上传(单片)→ complete 合并
+  const up = await postRaw(`/api/web-upload?job=${wjId}&sign=${wjSign}&name=a.jpg&index=0&total=1`, fakeJpg);
   assert.strictEqual(up.status, 200);
-  const upBody = JSON.parse(up.body);
-  assert.strictEqual(upBody.ok, true);
-  assert.strictEqual(upBody.name, 'a.jpg');
+  assert.strictEqual(JSON.parse(up.body).ok, true);
+  const comp = await post(`/api/web-upload-complete?job=${wjId}&sign=${wjSign}&name=a.jpg&total=1`, {});
+  assert.strictEqual(comp.status, 200);
+  assert.strictEqual(JSON.parse(comp.body).name, 'a.jpg');
   const afterUpload = db.get(wjId);
   assert.strictEqual(afterUpload.media.length, 1);
   assert.strictEqual(afterUpload.media[0].type, 'image');
   assert.ok(fs.existsSync(afterUpload.media[0].path), '上传文件应落盘');
 
-  // 不允许的扩展名 → 400
-  const badUp = await postRaw(`/api/web-upload?job=${wjId}&sign=${wjSign}&name=x.exe`, Buffer.from('x'));
+  // 不允许的扩展名 → 400（分片端点即拒）
+  const badUp = await postRaw(`/api/web-upload?job=${wjId}&sign=${wjSign}&name=x.exe&index=0&total=1`, Buffer.from('x'));
   assert.strictEqual(badUp.status, 400);
   assert.strictEqual(db.get(wjId).media.length, 1); // 未追加
 

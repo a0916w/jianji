@@ -788,8 +788,54 @@ const app = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, id: job.id, sign: sign(job.id) });
     }
 
+    // 分片上传：每片写到 <workdir>/<id>/.parts/<name>/<index>。全部传完再调
+    // /api/web-upload-complete 合并。分片小(客户端 8MB)→ 断连只重传一片、抗抖更好。
     if (req.method === 'POST' && p === '/api/web-upload') {
       const id = u.searchParams.get('job'), sig = u.searchParams.get('sign'), rawName = u.searchParams.get('name') || '';
+      const index = parseInt(u.searchParams.get('index') || '0', 10);
+      if (!verify(id, sig)) return sendJson(res, 403, { error: '签名无效' });
+      const job = db.get(id);
+      if (!job) return sendJson(res, 404, { error: '任务不存在' });
+      const safeName = path.basename(rawName);
+      const ext = path.extname(safeName).toLowerCase();
+      if (!WEB_UPLOAD_EXT[ext]) return sendJson(res, 400, { error: '不支持的文件类型' });
+      if (!Number.isInteger(index) || index < 0 || index > 200000) return sendJson(res, 400, { error: '非法分片号' });
+      const partDir = safeMediaPath(id, path.join('.parts', safeName));
+      if (!partDir) return sendJson(res, 400, { error: '非法路径' });
+      fs.mkdirSync(partDir, { recursive: true });
+      const partFp = path.join(partDir, String(index));
+
+      let responded = false;
+      let size = 0;
+      const ws = fs.createWriteStream(partFp);
+      res.on('error', () => {});
+      const fail = (code, obj) => {
+        if (responded) return;
+        responded = true;
+        fs.unlink(partFp, () => {});
+        sendJson(res, code, obj);
+        res.once('finish', () => req.destroy());
+      };
+      req.on('data', (chunk) => {
+        if (responded) return;
+        size += chunk.length;
+        if (size > WEB_UPLOAD_MAX_BYTES) { ws.destroy(); fail(413, { error: '分片过大' }); }
+      });
+      req.on('error', () => { ws.destroy(); fail(500, { error: '上传失败' }); });
+      ws.on('error', () => fail(500, { error: '写入失败' }));
+      ws.on('finish', () => {
+        if (responded) return;
+        responded = true;
+        sendJson(res, 200, { ok: true, index });
+      });
+      req.pipe(ws);
+      return;
+    }
+
+    // 合并分片：按序拼接 .parts/<name>/0..total-1 → <id>/<name>，再 H.264 归一化 + 入 media。
+    if (req.method === 'POST' && p === '/api/web-upload-complete') {
+      const id = u.searchParams.get('job'), sig = u.searchParams.get('sign'), rawName = u.searchParams.get('name') || '';
+      const total = parseInt(u.searchParams.get('total') || '0', 10);
       if (!verify(id, sig)) return sendJson(res, 403, { error: '签名无效' });
       const job = db.get(id);
       if (!job) return sendJson(res, 404, { error: '任务不存在' });
@@ -797,46 +843,52 @@ const app = http.createServer(async (req, res) => {
       const ext = path.extname(safeName).toLowerCase();
       const mediaType = WEB_UPLOAD_EXT[ext];
       if (!mediaType) return sendJson(res, 400, { error: '不支持的文件类型' });
+      if (!Number.isInteger(total) || total < 1) return sendJson(res, 400, { error: '非法分片数' });
       const fp = safeMediaPath(id, safeName);
-      if (!fp) return sendJson(res, 400, { error: '非法路径' });
-      fs.mkdirSync(path.dirname(fp), { recursive: true });
+      const partDir = safeMediaPath(id, path.join('.parts', safeName));
+      if (!fp || !partDir) return sendJson(res, 400, { error: '非法路径' });
 
-      let responded = false;
-      let size = 0;
-      const ws = fs.createWriteStream(fp);
-      res.on('error', () => {}); // 客户端提前断开时 res 上可能触发 error，防止未监听导致进程崩溃
-      const fail = (code, obj) => {
-        if (responded) return;
-        responded = true;
-        fs.unlink(fp, () => {}); // 清理写了一半的残留文件，失败静默即可（可能压根没写出内容）
-        sendJson(res, code, obj);
-        // req 和 res 共用同一条 socket：先把响应体写出去，flush 完再销毁请求连接，
-        // 否则先 destroy(req) 会把 socket 一并炸掉，客户端只看到裸 TCP reset 而不是 413/500。
-        res.once('finish', () => req.destroy());
-      };
-      req.on('data', (chunk) => {
-        if (responded) return;
-        size += chunk.length;
-        if (size > WEB_UPLOAD_MAX_BYTES) {
-          ws.destroy();
-          fail(413, { error: '文件过大' });
+      (async () => {
+        try {
+          fs.mkdirSync(path.dirname(fp), { recursive: true });
+          const out = fs.createWriteStream(fp);
+          let written = 0;
+          for (let i = 0; i < total; i++) {
+            const partFp = path.join(partDir, String(i));
+            if (!fs.existsSync(partFp)) {
+              out.destroy(); fs.unlink(fp, () => {});
+              return sendJson(res, 400, { error: `缺少分片 ${i}，请重传` });
+            }
+            written += fs.statSync(partFp).size;
+            if (written > WEB_UPLOAD_MAX_BYTES) {
+              out.destroy(); fs.unlink(fp, () => {});
+              try { fs.rmSync(partDir, { recursive: true, force: true }); } catch {}
+              return sendJson(res, 413, { error: '文件过大' });
+            }
+            await new Promise((resolve, reject) => {
+              const rs = fs.createReadStream(partFp);
+              rs.on('error', reject);
+              rs.on('end', resolve);
+              rs.pipe(out, { end: false });
+            });
+          }
+          await new Promise((resolve) => out.end(resolve));
+          try { fs.rmSync(partDir, { recursive: true, force: true }); } catch {}
+          // 视频进来即转 H.264（HEVC 浏览器播不了→剪辑页空 + 渲染重）。尽力而为，失败留原文件。
+          if (mediaType === 'video') {
+            try { await ensureH264(fp); }
+            catch (e) { console.error('[web-upload-complete] H.264 归一化失败(留原文件)', fp, (e && e.message) || e); }
+          }
+          // 幂等：complete 重试不重复入 media（按路径去重）。
+          const media = (db.get(id).media || []);
+          if (!media.some((m) => m.path === fp)) media.push({ type: mediaType, path: fp });
+          db.update(id, { media });
+          sendJson(res, 200, { ok: true, name: safeName });
+        } catch (e) {
+          console.error('[web-upload-complete] 合并失败', (e && e.message) || e);
+          sendJson(res, 500, { error: '合并失败' });
         }
-      });
-      req.on('error', () => { ws.destroy(); fail(500, { error: '上传失败' }); });
-      ws.on('error', () => fail(500, { error: '写入失败' }));
-      ws.on('finish', async () => {
-        if (responded) return;
-        responded = true;
-        // 视频进来即转 H.264（HEVC 浏览器播不了→剪辑页空 + 渲染重）。尽力而为，失败留原文件。
-        if (mediaType === 'video') {
-          try { await ensureH264(fp); }
-          catch (e) { console.error('[web-upload] H.264 归一化失败(留原文件)', fp, (e && e.message) || e); }
-        }
-        const media = (job.media || []).concat([{ type: mediaType, path: fp }]);
-        db.update(id, { media });
-        sendJson(res, 200, { ok: true, name: safeName });
-      });
-      req.pipe(ws);
+      })();
       return;
     }
 

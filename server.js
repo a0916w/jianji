@@ -288,6 +288,7 @@ const app = http.createServer(async (req, res) => {
       </div>
       <div id="modalThemeMsg" style="font-size:12px;margin-top:6px;min-height:14px;color:var(--text-dim)"></div>
     </div>
+    <div class="modal-field"><div class="modal-label">切片状态</div><div class="modal-value" id="modalSliceStatus"></div></div>
     <div class="modal-field" id="modalRenderField" hidden><div class="modal-label">渲染错误（失败原因）</div><div class="modal-value" id="modalRenderErr" style="color:var(--red)"></div></div>
     <div class="modal-field" id="modalSliceField" hidden><div class="modal-label">切片错误（失败原因）</div><div class="modal-value" id="modalSliceErr" style="color:var(--red)"></div></div>
     <div class="modal-actions"><a class="btn btn-dl" id="modalDl" href="#">下载成品</a></div>
@@ -411,6 +412,11 @@ const app = http.createServer(async (req, res) => {
     } else {
       renderField.hidden = true;
     }
+    // 切片状态（中文）+ 已切片时带 video_id。
+    const SLICE_ZH = { slicing: '切片中', done: '已切片', failed: '切片失败' };
+    let sliceTxt = SLICE_ZH[d.slice_status] || '未切片';
+    if (d.slice_status === 'done' && d.slice_video_id) sliceTxt += '（video_id=' + d.slice_video_id + '）';
+    document.getElementById('modalSliceStatus').textContent = sliceTxt;
     // 切片失败时显示错误原因，让操作员看清为什么，别盲目重试。
     const sliceField = document.getElementById('modalSliceField');
     if (d.slice_status === 'failed' && d.slice_error) {

@@ -240,7 +240,7 @@ const app = http.createServer(async (req, res) => {
   .page{font-weight:600;color:var(--text);padding:3px 10px;border:1px solid var(--border);border-radius:20px}
   .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;overflow-x:auto}
   table{border-collapse:collapse;width:100%;min-width:640px}
-  th{background:var(--panel-2);color:var(--text-dim);font-size:12px;font-weight:600;letter-spacing:.5px;text-align:left;padding:12px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
+  th{background:var(--panel-2);color:var(--text-dim);font-size:12px;font-weight:600;letter-spacing:.5px;text-align:left;padding:12px 14px;white-space:nowrap;position:sticky;top:0;z-index:2;box-shadow:inset 0 -1px 0 var(--border)}
   td{padding:11px 14px;font-size:14px;border-bottom:1px solid var(--border);vertical-align:middle}
   tr:last-child td{border-bottom:none}
   tbody tr{transition:background .15s}

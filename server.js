@@ -333,11 +333,15 @@ const app = http.createServer(async (req, res) => {
     const id = cell.dataset.titleId;
     const cur = cell.dataset.title || '';
     const input = document.createElement('textarea');
-    input.value = cur; input.className = 'title-edit'; input.rows = 3;
-    input.style.resize = 'vertical';
+    input.value = cur; input.className = 'title-edit'; input.rows = 1;
+    input.style.resize = 'none'; input.style.overflow = 'hidden';
     cell.textContent = '';
     cell.appendChild(input);
+    // 自动撑高，把全部内容显示出来，不用手动拖。
+    const autosize = () => { input.style.height = 'auto'; input.style.height = input.scrollHeight + 'px'; };
+    input.addEventListener('input', autosize);
     input.focus(); input.select();
+    autosize();
     let settled = false;
     const restore = (text) => { cell.textContent = text || '—'; };
     const cancel = () => { if (settled) return; settled = true; restore(cur); };

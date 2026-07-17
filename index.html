@@ -148,6 +148,9 @@
     flex: 1 1 100%; max-width: none; background: var(--panel-2); color: var(--text);
     border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
     font-size: 14px; outline: none;
+    /* 无长度限制 + 随内容自动撑高（长标题完整粘贴/换行显示，不再被截断） */
+    font-family: inherit; line-height: 1.5; resize: none; overflow: hidden;
+    min-height: 44px;
   }
   .actions #titleInput:focus { border-color: var(--accent); }
   button.btn {
@@ -263,7 +266,7 @@
   </div>
 
   <div class="actions">
-    <input type="text" id="titleInput" maxlength="200" placeholder="成片标题（选填，后台生成时保存到任务）">
+    <textarea id="titleInput" rows="1" placeholder="成片标题（选填，后台生成时保存到任务）"></textarea>
     <button class="btn btn-export" id="exportBtn" disabled>🖥 浏览器生成</button>
     <button class="btn btn-export" id="serverBtn" disabled>☁ 后台生成</button>
     <span id="status"></span>
@@ -1164,6 +1167,15 @@ async function fetchBlobWithProgress(url, onProgress) {
   return new Blob(chunks, { type: resp.headers.get("content-type") || "" });
 }
 
+/* 标题 textarea 随内容自动撑高：长标题完整粘贴/换行显示，不再被截断 */
+function autoGrowTitle() {
+  const t = $("titleInput");
+  if (!t) return;
+  t.style.height = "auto";
+  t.style.height = t.scrollHeight + "px";
+}
+{ const t = $("titleInput"); if (t) t.addEventListener("input", autoGrowTitle); }
+
 /* ---------------- Telegram 任务对接 ---------------- */
 (async function initFromJob() {
   const q = new URLSearchParams(location.search);
@@ -1175,7 +1187,7 @@ async function fetchBlobWithProgress(url, onProgress) {
     const r = await fetch(`/api/job?job=${encodeURIComponent(job)}&sign=${encodeURIComponent(sign)}`);
     if (!r.ok) throw new Error("任务加载失败");
     const data = await r.json();
-    if (data.title) $("titleInput").value = data.title;   // 回显任务标题
+    if (data.title) { $("titleInput").value = data.title; autoGrowTitle(); }   // 回显任务标题（并撑高）
     // 逐个加载素材（fetch blob → File → addFiles 单个），带进度条。大任务(几十个素材/GB级)
     // 不再一口气拉全部、白屏无反馈；卡片随加载渐进出现。每个 clip 打上原始 media 下标(mediaIndex)，
     // render.js 按 job.media[c.index] 取文件——逐个加 + 显式赋 k，即便某素材失败也不会错位。

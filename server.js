@@ -326,14 +326,15 @@ const app = http.createServer(async (req, res) => {
   const SLICE = ${JSON.stringify({ enabled: sliceCfg.enabled, themes: sliceCfg.themes })};
   const TOKEN = new URLSearchParams(location.search).get('token');
 
-  // 列表行内联改标题：点标题格 → 变输入框 → Enter/失焦保存, Esc 取消。
+  // 列表行内联改标题：点标题格 → 变多行文本框 → Enter/失焦保存, Shift+Enter 换行, Esc 取消。
   document.addEventListener('click', (e) => {
     const cell = e.target.closest('td.title[data-title-id]');
-    if (!cell || cell.querySelector('input')) return;
+    if (!cell || cell.querySelector('textarea')) return;
     const id = cell.dataset.titleId;
     const cur = cell.dataset.title || '';
-    const input = document.createElement('input');
-    input.type = 'text'; input.value = cur; input.className = 'title-edit';
+    const input = document.createElement('textarea');
+    input.value = cur; input.className = 'title-edit'; input.rows = 3;
+    input.style.resize = 'vertical';
     cell.textContent = '';
     cell.appendChild(input);
     input.focus(); input.select();
@@ -361,7 +362,7 @@ const app = http.createServer(async (req, res) => {
       }
     };
     input.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') { ev.preventDefault(); save(); }
+      if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); save(); } // Enter 保存，Shift+Enter 换行
       else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
     });
     input.addEventListener('blur', save);

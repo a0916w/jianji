@@ -77,19 +77,27 @@ function startWorker({ db, workDir }) {
           // → stderr 为空，只留「Command failed: 命令」。这时改看信号/超时/退出码判真因。
           const msg = String((e && e.message) || e);
           const stderr = e && e.stderr ? String(e.stderr).trim() : '';
-          let reason = stderr;
-          if (!reason) {
-            if (e && e.killed) {
-              reason = `⚠️ 渲染超时被终止（超过 ${Math.round(RENDER_TIMEOUT_MS / 60000)} 分钟）——素材太多/太大，小机跑不完。建议拆成小任务或换更大机器。`;
-            } else if (e && e.signal) {
-              reason = `⚠️ 渲染进程被信号 ${e.signal} 终止——多为内存不足(OOM)被系统杀，通常是素材过多/过大。建议拆分任务、压小视频或加内存/swap。`;
-            } else if (e && typeof e.code === 'number' && e.code !== 0) {
-              reason = `ffmpeg 退出码 ${e.code}（无错误输出）——可能被截断或崩溃。`;
+          // 源素材不存在（被删 / 没下载成功）——ffmpeg 报 "No such file / Error opening input"。
+          // 这种不显示那一大坨命令，直接给操作员看得懂的友好提示。
+          if (/No such file or directory|Error opening input/i.test(msg + ' ' + stderr)) {
+            const friendly = '视频/图片不存在服务器（源素材已被删除或未成功下载，请重新上传/重发素材后再试）';
+            try { db.update(job.id, { status: 'failed', error: friendly }); } catch {}
+            console.error('[worker] render failed: 源文件缺失', job.id, stderr.slice(-300));
+          } else {
+            let reason = stderr;
+            if (!reason) {
+              if (e && e.killed) {
+                reason = `⚠️ 渲染超时被终止（超过 ${Math.round(RENDER_TIMEOUT_MS / 60000)} 分钟）——素材太多/太大，小机跑不完。建议拆成小任务或换更大机器。`;
+              } else if (e && e.signal) {
+                reason = `⚠️ 渲染进程被信号 ${e.signal} 终止——多为内存不足(OOM)被系统杀，通常是素材过多/过大。建议拆分任务、压小视频或加内存/swap。`;
+              } else if (e && typeof e.code === 'number' && e.code !== 0) {
+                reason = `ffmpeg 退出码 ${e.code}（无错误输出）——可能被截断或崩溃。`;
+              }
             }
+            const full = (reason ? `${msg}\n${reason}` : msg).slice(-900);
+            try { db.update(job.id, { status: 'failed', error: full }); } catch {}
+            console.error('[worker] render failed', job.id, msg, '| signal=' + (e && e.signal), 'killed=' + (e && e.killed), 'code=' + (e && e.code), stderr ? '| stderr: ' + stderr.slice(-500) : '');
           }
-          const full = (reason ? `${msg}\n${reason}` : msg).slice(-900);
-          try { db.update(job.id, { status: 'failed', error: full }); } catch {}
-          console.error('[worker] render failed', job.id, msg, '| signal=' + (e && e.signal), 'killed=' + (e && e.killed), 'code=' + (e && e.code), stderr ? '| stderr: ' + stderr.slice(-500) : '');
         }
       }
     } catch (e) {

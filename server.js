@@ -250,7 +250,7 @@ const app = http.createServer(async (req, res) => {
   .title{max-width:280px;white-space:normal;word-break:break-word}
   .badge{display:inline-block;padding:3px 11px;border-radius:20px;font-size:12px;font-weight:600;color:var(--c);background:color-mix(in srgb,var(--c) 16%,transparent);border:1px solid color-mix(in srgb,var(--c) 38%,transparent)}
   .src{font-size:12px;padding:2px 9px;border-radius:6px;background:var(--panel-2);border:1px solid var(--border);color:var(--text-dim)}
-  .actions{display:flex;gap:8px}
+  .actions{display:flex;flex-wrap:wrap;gap:6px;max-width:260px}
   .btn{display:inline-flex;align-items:center;justify-content:center;text-align:center;padding:6px 14px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;white-space:nowrap;transition:opacity .15s,transform .1s}
   .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
   .filters input,.filters select{padding:8px 10px;background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;outline:none}

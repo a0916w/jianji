@@ -67,6 +67,19 @@ function escapeHtml(v) {
 const WEB_UPLOAD_EXT = { '.jpg': 'image', '.jpeg': 'image', '.png': 'image', '.webp': 'image', '.mp4': 'video', '.mov': 'video' };
 const WEB_UPLOAD_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2GB（原 200MB 太小，大视频源常见几百 MB~1GB+）
 
+// 浏览器解不了的视频转 H.264 的临时任务(内存态,文件在 WORK_DIR/conv-<cid>/)。
+const converts = new Map(); // cid -> { status:'converting'|'done'|'error', percent, error, at }
+const CID_RE = /^[A-Za-z0-9_-]{8,64}$/;
+function pruneConverts() {
+  const now = Date.now();
+  for (const [cid, c] of converts) {
+    if (now - c.at > 30 * 60 * 1000) {
+      converts.delete(cid);
+      try { fs.rmSync(path.join(WORK_DIR, 'conv-' + cid), { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  }
+}
+
 const app = http.createServer(async (req, res) => {
   try {
     const u = new URL(req.url, 'http://x');
@@ -889,6 +902,136 @@ const app = http.createServer(async (req, res) => {
           sendJson(res, 500, { error: '合并失败' });
         }
       })();
+      return;
+    }
+
+    // ---- 浏览器解不了的视频(H.265/HEVC 等)：传后端转 H.264 再载回浏览器 ----
+    // 与 web-upload 一样分片上传(带上传进度),再 /web-convert-start 后台 ffmpeg 转码
+    // (带转码进度,轮询 /web-convert-status),完成后 /web-convert-result 取回 H.264。
+    // 不入 job/DB,存 WORK_DIR/conv-<cid>/,30 分钟自动清。
+    if (req.method === 'POST' && p === '/api/web-convert-upload') {
+      const cid = u.searchParams.get('cid') || '', rawName = u.searchParams.get('name') || '';
+      const index = parseInt(u.searchParams.get('index') || '0', 10);
+      if (!CID_RE.test(cid)) return sendJson(res, 400, { error: '非法 cid' });
+      const safeName = path.basename(rawName);
+      const ext = path.extname(safeName).toLowerCase();
+      if (WEB_UPLOAD_EXT[ext] !== 'video') return sendJson(res, 400, { error: '只支持视频转码' });
+      if (!Number.isInteger(index) || index < 0 || index > 200000) return sendJson(res, 400, { error: '非法分片号' });
+      const partDir = safeMediaPath('conv-' + cid, path.join('.parts', safeName));
+      if (!partDir) return sendJson(res, 400, { error: '非法路径' });
+      fs.mkdirSync(partDir, { recursive: true });
+      const partFp = path.join(partDir, String(index));
+      let responded = false, size = 0;
+      const ws = fs.createWriteStream(partFp);
+      res.on('error', () => {});
+      const fail = (code, obj) => {
+        if (responded) return; responded = true;
+        fs.unlink(partFp, () => {});
+        sendJson(res, code, obj);
+        res.once('finish', () => req.destroy());
+      };
+      req.on('data', (chunk) => {
+        if (responded) return;
+        size += chunk.length;
+        if (size > WEB_UPLOAD_MAX_BYTES) { ws.destroy(); fail(413, { error: '分片过大' }); }
+      });
+      req.on('error', () => { ws.destroy(); fail(500, { error: '上传失败' }); });
+      ws.on('error', () => fail(500, { error: '写入失败' }));
+      ws.on('finish', () => { if (responded) return; responded = true; sendJson(res, 200, { ok: true, index }); });
+      req.pipe(ws);
+      return;
+    }
+
+    if (req.method === 'POST' && p === '/api/web-convert-start') {
+      const cid = u.searchParams.get('cid') || '', rawName = u.searchParams.get('name') || '';
+      const total = parseInt(u.searchParams.get('total') || '0', 10);
+      if (!CID_RE.test(cid)) return sendJson(res, 400, { error: '非法 cid' });
+      const safeName = path.basename(rawName);
+      const ext = path.extname(safeName).toLowerCase();
+      if (WEB_UPLOAD_EXT[ext] !== 'video') return sendJson(res, 400, { error: '只支持视频转码' });
+      if (!Number.isInteger(total) || total < 1) return sendJson(res, 400, { error: '非法分片数' });
+      const inFp = safeMediaPath('conv-' + cid, safeName);
+      const partDir = safeMediaPath('conv-' + cid, path.join('.parts', safeName));
+      const outFp = safeMediaPath('conv-' + cid, 'out.mp4');
+      if (!inFp || !partDir || !outFp) return sendJson(res, 400, { error: '非法路径' });
+
+      pruneConverts();
+      converts.set(cid, { status: 'converting', percent: 0, error: null, at: Date.now() });
+      sendJson(res, 200, { ok: true }); // 立即返回,转码在后台跑,客户端轮询进度
+
+      (async () => {
+        const setErr = (msg) => converts.set(cid, { status: 'error', percent: 0, error: msg, at: Date.now() });
+        try {
+          // 1) 拼接分片 → inFp
+          fs.mkdirSync(path.dirname(inFp), { recursive: true });
+          const out = fs.createWriteStream(inFp);
+          let written = 0;
+          for (let i = 0; i < total; i++) {
+            const partFp = path.join(partDir, String(i));
+            if (!fs.existsSync(partFp)) { out.destroy(); return setErr(`缺少分片 ${i}`); }
+            written += fs.statSync(partFp).size;
+            if (written > WEB_UPLOAD_MAX_BYTES) { out.destroy(); return setErr('文件过大'); }
+            await new Promise((resolve, reject) => {
+              const rs = fs.createReadStream(partFp);
+              rs.on('error', reject); rs.on('end', resolve); rs.pipe(out, { end: false });
+            });
+          }
+          await new Promise((resolve) => out.end(resolve));
+          try { fs.rmSync(partDir, { recursive: true, force: true }); } catch {}
+
+          // 2) ffmpeg 转 H.264,-progress 报进度
+          const dur = (await ffprobeDuration(inFp)) || 0;
+          await new Promise((resolve, reject) => {
+            const ps = require('child_process').spawn('ffmpeg', [
+              '-y', '-i', inFp,
+              '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast', '-crf', '23',
+              '-c:a', 'aac', '-ar', '44100', '-b:a', '128k',
+              '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', outFp,
+            ]);
+            ps.stdout.on('data', (buf) => {
+              const m = String(buf).match(/out_time_us=(\d+)/g);
+              if (m && dur > 0) {
+                const us = parseInt(m[m.length - 1].split('=')[1], 10);
+                const pct = Math.max(0, Math.min(99, Math.round((us / 1e6 / dur) * 100)));
+                const c = converts.get(cid); if (c && c.status === 'converting') { c.percent = pct; }
+              }
+            });
+            ps.on('error', reject);
+            ps.on('close', (code) => code === 0 ? resolve() : reject(new Error('ffmpeg 退出码 ' + code)));
+          });
+          try { fs.unlinkSync(inFp); } catch {}
+          converts.set(cid, { status: 'done', percent: 100, error: null, at: Date.now() });
+        } catch (e) {
+          console.error('[web-convert] 转码失败', (e && e.message) || e);
+          setErr((e && e.message) || '转码失败');
+        }
+      })();
+      return;
+    }
+
+    if (req.method === 'GET' && p === '/api/web-convert-status') {
+      const cid = u.searchParams.get('cid') || '';
+      if (!CID_RE.test(cid)) return sendJson(res, 400, { error: '非法 cid' });
+      const c = converts.get(cid);
+      if (!c) return sendJson(res, 404, { error: '转码任务不存在' });
+      return sendJson(res, 200, { status: c.status, percent: c.percent, error: c.error || null });
+    }
+
+    if ((req.method === 'GET' || req.method === 'HEAD') && p === '/api/web-convert-result') {
+      const cid = u.searchParams.get('cid') || '';
+      if (!CID_RE.test(cid)) return sendJson(res, 400, { error: '非法 cid' });
+      const c = converts.get(cid);
+      if (!c || c.status !== 'done') return sendJson(res, 409, { error: '转码未完成' });
+      const outFp = safeMediaPath('conv-' + cid, 'out.mp4');
+      if (!outFp || !fs.existsSync(outFp)) return sendJson(res, 404, { error: '文件不存在' });
+      const stat = fs.statSync(outFp);
+      res.writeHead(200, {
+        'Content-Type': 'video/mp4',
+        'Content-Length': stat.size,
+        'Referrer-Policy': 'no-referrer',
+      });
+      if (req.method === 'HEAD') return res.end();
+      fs.createReadStream(outFp).pipe(res);
       return;
     }
 

@@ -405,7 +405,27 @@ async function addFiles(files) {
       renderClips();
     } catch (err) {
       console.error(err);
-      setStatus(`⚠ 无法解析 ${file.name}（格式可能不受浏览器支持）`);
+      // 浏览器解不了的视频(常见 iPhone H.265)→ 传后端转 H.264 再载回,不用手动转。
+      if (isVideoFile(file) && !isImageFile(file)) {
+        try {
+          showUploadBar();
+          setStatus(`⚙ ${file.name} 浏览器无法解码,正在后台转 H.264…`);
+          const converted = await convertViaServer(file, (frac, label) => setUploadProgress(frac, label));
+          hideUploadBar();
+          const clip = await loadClip(converted);
+          if (clip.mediaIndex === undefined) clip.mediaIndex = clips.length;
+          clips.push(clip);
+          added++;
+          renderClips();
+          setStatus(`✅ ${file.name} 已转 H.264 并加入`);
+        } catch (e2) {
+          hideUploadBar();
+          console.error(e2);
+          setStatus(`⚠ 无法解析 ${file.name}（转码失败：${(e2 && e2.message) || ""}）`);
+        }
+      } else {
+        setStatus(`⚠ 无法解析 ${file.name}（格式可能不受浏览器支持）`);
+      }
     }
   }
   if (added) {
@@ -1120,6 +1140,55 @@ async function uploadOneWithRetry(id, sign, file, onProgress) {
     throw new Error(ed.error || `合并失败：${file.name}`);
   }
   onProgress && onProgress(1);
+}
+
+/* 浏览器解不了的视频(常见 iPhone H.265)→ 分片传后端 → ffmpeg 转 H.264 → 取回 blob。
+   onProgress(frac 0~1, label) 报「上传 40% + 转码 55% + 载入 5%」的合成进度。返回 H.264 的 File。*/
+function randomCid() {
+  const a = new Uint8Array(16); crypto.getRandomValues(a);
+  return Array.from(a, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function convertViaServer(file, onProgress) {
+  const cid = randomCid();
+  const CHUNK = 8 * 1024 * 1024;
+  const total = Math.max(1, Math.ceil(file.size / CHUNK));
+  const q = `cid=${cid}&name=${encodeURIComponent(file.name)}`;
+  // 1) 分片上传原文件(占进度 0~40%),每片重试 3 次。
+  for (let i = 0; i < total; i++) {
+    const blob = file.slice(i * CHUNK, Math.min(file.size, (i + 1) * CHUNK));
+    let ok = false, lastErr = null;
+    for (let a = 1; a <= 3; a++) {
+      try {
+        const r = await fetch(`/api/web-convert-upload?${q}&index=${i}&total=${total}`, { method: "POST", body: blob });
+        if (r.ok) { ok = true; break; }
+        const ed = await r.json().catch(() => ({}));
+        if (r.status >= 400 && r.status < 500) throw Object.assign(new Error(ed.error || "上传失败"), { __perm: true });
+        lastErr = new Error(ed.error || `上传失败(服务端 ${r.status})`);
+      } catch (e) { if (e.__perm) throw e; lastErr = e instanceof Error ? e : new Error("上传失败(网络中断)"); }
+      if (a < 3) await new Promise((r) => setTimeout(r, 1000 * a));
+    }
+    if (!ok) throw lastErr || new Error("上传失败");
+    onProgress && onProgress(0.40 * ((i + 1) / total), `转码·上传 ${Math.round(100 * (i + 1) / total)}%`);
+  }
+  // 2) 启动后台转码。
+  const sr = await fetch(`/api/web-convert-start?${q}&total=${total}`, { method: "POST" });
+  if (!sr.ok) { const ed = await sr.json().catch(() => ({})); throw new Error(ed.error || "启动转码失败"); }
+  // 3) 轮询转码进度(占 40~95%)。
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 800));
+    const st = await fetch(`/api/web-convert-status?cid=${cid}`).then((r) => r.json()).catch(() => null);
+    if (!st) continue;
+    if (st.status === "error") throw new Error(st.error || "转码失败");
+    if (st.status === "done") { onProgress && onProgress(0.97, "转码完成,载入中…"); break; }
+    onProgress && onProgress(0.40 + 0.55 * ((st.percent || 0) / 100), `转码中 ${st.percent || 0}%`);
+  }
+  // 4) 取回 H.264 结果。
+  const rr = await fetch(`/api/web-convert-result?cid=${cid}`);
+  if (!rr.ok) throw new Error("取回转码结果失败");
+  const blob = await rr.blob();
+  onProgress && onProgress(1, "转码完成");
+  const base = file.name.replace(/\.[^.]+$/, "");
+  return new File([blob], base + ".mp4", { type: "video/mp4" });
 }
 
 /* ---------------- 生成到服务器：上传原始素材，由后端 ffmpeg 渲染 ---------------- */
